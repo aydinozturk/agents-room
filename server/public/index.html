@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agents-room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=JetBrains+Mono:wght@400;600&display=swap">
+<script src="/vendor/marked.js"></script>
+<script src="/vendor/purify.js"></script>
+<style>
+:root {
+  --bg: #edf1f4;
+  --surface: #ffffff;
+  --surface-2: #f5f7f9;
+  --ink: #18222d;
+  --muted: #5e6b78;
+  --line: #d6dee5;
+  --brass: #a87a1f;
+  --brass-ink: #7d5a12;
+  --brass-soft: rgba(168, 122, 31, .12);
+  --felt: #2b4655;
+  --felt-edge: #1f3644;
+  --working: #2f6fd0;
+  --idle: #8a96a3;
+  --blocked: #c98a0c;
+  --error: #c8423a;
+  --done: #2e8f5f;
+  --offline: #c3ccd5;
+  --code-bg: #eef2f6;
+  --shadow: 0 1px 2px rgba(20, 30, 40, .06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121b24; --surface: #1a2530; --surface-2: #1f2c38; --ink: #e3e9ee; --muted: #93a1ae; --line: #2a3744;
+    --brass: #d4a84b; --brass-ink: #e2bd6b; --brass-soft: rgba(212, 168, 75, .14);
+    --felt: #22404e; --felt-edge: #17303c; --offline: #3b4857; --idle: #7d8a97; --code-bg: #15202a;
+    --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121b24; --surface: #1a2530; --surface-2: #1f2c38; --ink: #e3e9ee; --muted: #93a1ae; --line: #2a3744;
+  --brass: #d4a84b; --brass-ink: #e2bd6b; --brass-soft: rgba(212, 168, 75, .14);
+  --felt: #22404e; --felt-edge: #17303c; --offline: #3b4857; --idle: #7d8a97; --code-bg: #15202a;
+  --shadow: none; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 "Atkinson Hyperlegible", system-ui, sans-serif; }
+h1, h2, h3 { font-family: "Bricolage Grotesque", system-ui, sans-serif; margin: 0; letter-spacing: -.01em; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+code, pre, kbd { font-family: "JetBrains Mono", ui-monospace, monospace; }
+a { color: var(--brass-ink); }
+[hidden] { display: none !important; }
+
+.btn { background: var(--ink); color: var(--bg); border: 0; border-radius: 7px; padding: 7px 14px; cursor: pointer; font-weight: 700; }
+.btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
+.btn.small { padding: 3px 10px; font-size: .82rem; }
+.btn:disabled { opacity: .5; cursor: default; }
+
+/* ---------- uygulama iskeleti ---------- */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
+.rail { background: var(--surface); border-right: 1px solid var(--line); padding: 18px 14px; display: flex; flex-direction: column; gap: 22px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, color-mix(in srgb, var(--felt) 70%, white), var(--felt)); box-shadow: inset 0 0 0 3px var(--felt-edge), 0 0 0 2px var(--brass); flex: none; }
+.brand h1 { font-size: 1.15rem; }
+.rail h2 { font-size: .8rem; color: var(--muted); font-family: inherit; font-weight: 700; margin-bottom: 6px; }
+.room-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.room-list button { width: 100%; text-align: left; background: none; border: 0; border-radius: 7px; padding: 7px 9px; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+.room-list button:hover { background: var(--surface-2); }
+.room-list button[aria-current="true"] { background: var(--brass-soft); box-shadow: inset 3px 0 0 var(--brass); }
+.room-list .rn { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-list .rc { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; align-self: center; }
+.room-list .rt { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-search { width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; font-size: .85rem; margin-bottom: 8px; }
+.room-group { margin-top: 10px; }
+.room-group > button { background: none; border: 0; color: var(--muted); font-size: .78rem; font-weight: 700; cursor: pointer; padding: 2px 0 6px; }
+.room-list.closed .rn { color: var(--muted); font-weight: 400; }
+.room-list.closed .rn::before { content: "🔒 "; font-size: .8em; }
+.closed-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; justify-content: space-between; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--offline); border-radius: 10px; padding: 10px 14px; color: var(--muted); }
+.btn.danger { background: transparent; color: var(--error); border: 1px solid color-mix(in srgb, var(--error) 45%, var(--line)); font-weight: 700; }
+.btn.danger:hover { background: color-mix(in srgb, var(--error) 10%, transparent); }
+.btn.danger.solid { background: var(--error); color: #fff; border-color: var(--error); }
+.confirm-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.confirm-body ul { margin: 0; padding-left: 1.2em; color: var(--muted); }
+.confirm-body textarea { width: 100%; min-height: 70px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; font-size: .85rem; color: var(--muted); }
+.live { display: inline-flex; align-items: center; gap: 7px; }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); }
+.live.on i { background: var(--done); box-shadow: 0 0 0 3px color-mix(in srgb, var(--done) 25%, transparent); }
+
+main { padding: 22px 26px 40px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.room-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 24px; }
+.room-head h2 { font-size: 1.9rem; line-height: 1.1; }
+.room-head p { margin: 4px 0 0; color: var(--muted); }
+.room-head .repo { font-family: "JetBrains Mono", monospace; font-size: .8rem; color: var(--muted); }
+.stats { display: flex; gap: 18px; }
+.stat { text-align: right; }
+.stat b { display: block; font-family: "Bricolage Grotesque", sans-serif; font-size: 1.35rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: .78rem; }
+.stat.txt b { font-size: 1.05rem; font-weight: 700; white-space: nowrap; }
+.crown { font-size: .85em; margin-right: 2px; }
+.roster .who .crown { display: inline; color: inherit; }
+.bubble.consult { border-left: 3px solid var(--working); padding-left: 10px; }
+.bubble.consult-reply { border-left: 3px solid var(--line); padding-left: 10px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); min-width: 0; }
+.panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.panel > header h3 { font-size: 1rem; }
+.panel > header small { color: var(--muted); }
+
+.top { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.top > .panel { height: clamp(460px, 66vh, 820px); display: flex; flex-direction: column; }
+.head-actions { display: flex; align-items: center; gap: 8px; }
+.icon-btn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); padding: 3px 9px; font-size: .78rem; cursor: pointer; }
+.icon-btn:hover { color: var(--ink); border-color: var(--brass); }
+.icon-btn svg { width: 14px; height: 14px; }
+.panel.is-max { position: fixed; inset: 14px; z-index: 50; height: auto !important; max-height: none; box-shadow: 0 24px 70px rgba(0, 0, 0, .35); display: flex; flex-direction: column; }
+.panel.is-max .board { overflow-y: auto; flex: 1; align-content: start; }
+.panel.is-max .stage { max-width: min(560px, 60vh); }
+body.has-max::before { content: ""; position: fixed; inset: 0; background: rgba(10, 18, 26, .5); z-index: 40; }
+body.has-max { overflow: hidden; }
+
+/* ---------- masa ---------- */
+.table-wrap { padding: 10px 14px 14px; flex: 1; min-height: 0; overflow-y: auto; }
+.stage { position: relative; aspect-ratio: 1; max-width: min(380px, 42vh); margin: 0 auto; }
+.felt { position: absolute; inset: 24%; border-radius: 50%; background: radial-gradient(circle at 40% 32%, color-mix(in srgb, var(--felt) 78%, white), var(--felt) 72%); box-shadow: inset 0 0 0 5px var(--felt-edge), 0 0 0 1.5px var(--brass); display: grid; place-items: center; text-align: center; color: #e9f1f5; padding: 8%; }
+.felt b { display: block; font-family: "Bricolage Grotesque", sans-serif; font-size: 1.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.felt span { font-size: .78rem; opacity: .85; }
+.seat { position: absolute; width: 26%; transform: translate(-50%, -50%); text-align: center; font-size: .76rem; line-height: 1.2; background: none; border: 0; padding: 0; cursor: default; }
+.avatar { --h: 210; width: 40px; height: 40px; margin: 0 auto 4px; border-radius: 50%; display: grid; place-items: center; position: relative; font-weight: 700; font-size: .72rem; background: hsl(var(--h) 30% 92%); color: hsl(var(--h) 40% 25%); box-shadow: 0 0 0 2.5px var(--st, var(--offline)); }
+:root[data-theme="dark"] .avatar { background: hsl(var(--h) 22% 24%); color: hsl(var(--h) 35% 85%); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .avatar { background: hsl(var(--h) 22% 24%); color: hsl(var(--h) 35% 85%); } }
+.seat[data-status="offline"] .avatar { opacity: .5; }
+.seat .nm { font-weight: 700; word-break: break-word; }
+.seat .act { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.roster { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--line); }
+.roster li { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 8px; padding: 7px 2px; border-bottom: 1px solid var(--line); font-size: .85rem; }
+.roster li:last-child { border-bottom: 0; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--st, var(--offline)); }
+.roster .who b { font-weight: 700; }
+.roster .who span { color: var(--muted); display: block; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px; }
+.roster .kind { font-size: .72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+
+/* ---------- konuşma ---------- */
+.feed { display: flex; flex-direction: column; }
+.history-edge { text-align: center; color: var(--muted); font-size: .76rem; padding: 8px 0 2px; }
+.msgs { flex: 1; overflow-y: auto; padding: 6px 16px 10px; overflow-anchor: none; }
+.day { text-align: center; color: var(--muted); font-size: .75rem; margin: 14px 0 6px; }
+.msg { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding: 9px 0; }
+.msg + .msg.cont { padding-top: 0; }
+.msg.cont .avatar, .msg.cont .meta { visibility: hidden; height: 0; }
+.msg .avatar { width: 32px; height: 32px; font-size: .68rem; margin: 2px 0 0; box-shadow: none; }
+.meta { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+.meta b { font-weight: 700; }
+.meta .role { font-size: .72rem; color: var(--brass-ink); }
+.meta time, .meta .to { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.msg.dm .bubble { border-left: 3px solid var(--brass); padding-left: 10px; }
+.msg.me-mentioned .bubble { background: var(--brass-soft); border-radius: 8px; padding: 6px 10px; margin-left: -10px; }
+.bubble.clamped { max-height: 22em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 75%, transparent); mask-image: linear-gradient(#000 75%, transparent); }
+.more { background: none; border: 0; color: var(--brass-ink); cursor: pointer; padding: 2px 0; font-size: .82rem; }
+.event { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 3px 0; color: var(--muted); font-size: .84rem; }
+.event .ic { text-align: center; }
+.event time { font-size: .75rem; font-variant-numeric: tabular-nums; }
+.event.join { opacity: .75; }
+.task-link { color: var(--brass-ink); font-weight: 700; text-decoration: none; cursor: pointer; border-bottom: 1px dotted currentColor; }
+.mention { color: var(--working); font-weight: 700; }
+.mention.me { background: var(--brass-soft); color: var(--brass-ink); border-radius: 4px; padding: 0 3px; }
+.empty { color: var(--muted); font-size: .88rem; padding: 14px 0; }
+
+/* markdown içerik: mesaj içinde ölçekli, sakin */
+.md { overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: .35em 0; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { font-family: "Bricolage Grotesque", sans-serif; margin: .7em 0 .25em; line-height: 1.25; }
+.md h1 { font-size: 1.12rem; }
+.md h2 { font-size: 1.04rem; }
+.md h3 { font-size: .98rem; }
+.md h4, .md h5, .md h6 { font-size: .92rem; color: var(--muted); }
+.md ul, .md ol { margin: .3em 0; padding-left: 1.35em; }
+.md li { margin: .12em 0; }
+.md li > p { margin: 0; }
+.md blockquote { margin: .5em 0; padding: .1em 0 .1em .8em; border-left: 3px solid var(--line); color: var(--muted); }
+.md code { background: var(--code-bg); border-radius: 4px; padding: .05em .35em; font-size: .86em; }
+.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: .82rem; line-height: 1.5; margin: .5em 0; }
+.md pre code { background: none; padding: 0; font-size: inherit; }
+.md table { border-collapse: collapse; margin: .5em 0; font-size: .86rem; display: block; overflow-x: auto; max-width: 100%; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 9px; text-align: left; vertical-align: top; }
+.md th { background: var(--surface-2); }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: .8em 0; }
+.md img { max-width: 100%; }
+
+.composer { border-top: 1px solid var(--line); padding: 10px 12px 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip { background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; font-size: .78rem; cursor: pointer; }
+.chip:hover { border-color: var(--brass); }
+.compose-row { display: flex; gap: 8px; align-items: flex-end; }
+.compose-row textarea { flex: 1; min-width: 0; resize: none; min-height: 42px; max-height: 220px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; line-height: 1.45; }
+.hint { color: var(--muted); font-size: .74rem; margin-top: 5px; }
+
+/* ---------- görev panosu ---------- */
+.board-tools { display: flex; gap: 10px; align-items: center; }
+.board-tools select { max-width: min(320px, 70vw); background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; padding: 3px 8px; font-size: .85rem; }
+.board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, .8fr); gap: 14px; padding: 14px 16px 16px; }
+.lane h4 { margin: 0 0 8px; font-size: .82rem; display: flex; justify-content: space-between; color: var(--muted); }
+.lane h4 em { font-style: normal; font-variant-numeric: tabular-nums; }
+.lane ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.card { width: 100%; text-align: left; background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--c, var(--line)); border-radius: 7px; padding: 8px 10px; cursor: pointer; font-size: .86rem; }
+.card:hover { border-color: color-mix(in srgb, var(--c, var(--line)) 60%, var(--line)); }
+.card .t { font-weight: 700; line-height: 1.3; }
+.card .t span { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.card .m { color: var(--muted); font-size: .76rem; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.card .p { margin-top: 5px; font-size: .8rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card.plan { background: var(--brass-soft); }
+.lane.collapsed ol { display: none; }
+.lane .toggle { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: .78rem; padding: 0; }
+
+.bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.rows { list-style: none; margin: 0; padding: 4px 16px 10px; max-height: 260px; overflow-y: auto; }
+.rows li { display: grid; grid-template-columns: 3.4rem 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: .84rem; }
+.rows li:last-child { border-bottom: 0; }
+.rows time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rows .err { color: var(--error); font-weight: 700; }
+.rows .warn { color: var(--blocked); font-weight: 700; }
+.rows code { font-size: .8rem; }
+
+/* ---------- görev ayrıntısı ---------- */
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); background: var(--surface); color: var(--ink); box-shadow: 0 18px 50px rgba(0, 0, 0, .25); }
+dialog::backdrop { background: rgba(10, 18, 26, .45); }
+.dlg-head { display: flex; justify-content: space-between; gap: 12px; padding: 16px 20px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); }
+.dlg-head h3 { font-size: 1.2rem; }
+.dlg-head > .btn { align-self: flex-start; flex: none; }
+.dlg-head .sub { color: var(--muted); font-size: .84rem; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.dlg-body { padding: 14px 20px 18px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.dlg-body section h4 { margin: 0 0 6px; font-size: .8rem; color: var(--muted); }
+.pill { display: inline-block; border-radius: 999px; padding: 0 9px; font-size: .76rem; font-weight: 700; background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c); }
+.artifacts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: .86rem; }
+.kids { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.kids button { width: 100%; text-align: left; background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--c); border-radius: 7px; padding: 6px 10px; cursor: pointer; font-size: .86rem; }
+.dlg-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.dlg-actions textarea { width: 100%; min-height: 60px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+
+/* ---------- giriş ---------- */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login .card-l { width: min(440px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 26px; display: flex; flex-direction: column; gap: 14px; }
+.login p { margin: 0; color: var(--muted); }
+.login form { display: flex; gap: 8px; }
+.login input { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
+.error-text { color: var(--error); }
+
+/* ---------- duyarlı ---------- */
+@media (max-width: 1180px) { .board { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 980px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 16px; }
+  .rail > section { width: 100%; }
+  .rail h2 { display: none; }
+  .room-list { flex-direction: row; overflow-x: auto; gap: 6px; }
+  .room-list button { width: auto; white-space: nowrap; }
+  .room-list .rt { display: none; }
+  .room-search { width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; font-size: .85rem; margin-bottom: 8px; }
+.room-group { margin-top: 10px; }
+.room-group > button { background: none; border: 0; color: var(--muted); font-size: .78rem; font-weight: 700; cursor: pointer; padding: 2px 0 6px; }
+.room-list.closed .rn { color: var(--muted); font-weight: 400; }
+.room-list.closed .rn::before { content: "🔒 "; font-size: .8em; }
+.closed-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; justify-content: space-between; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--offline); border-radius: 10px; padding: 10px 14px; color: var(--muted); }
+.btn.danger { background: transparent; color: var(--error); border: 1px solid color-mix(in srgb, var(--error) 45%, var(--line)); font-weight: 700; }
+.btn.danger:hover { background: color-mix(in srgb, var(--error) 10%, transparent); }
+.btn.danger.solid { background: var(--error); color: #fff; border-color: var(--error); }
+.confirm-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.confirm-body ul { margin: 0; padding-left: 1.2em; color: var(--muted); }
+.confirm-body textarea { width: 100%; min-height: 70px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.rail-foot { margin-top: 0; flex-direction: row; align-items: center; margin-left: auto; }
+  main { padding: 16px; }
+  .top { grid-template-columns: 1fr; }
+  .top > .panel { height: auto; }
+  .top > .panel.feed { height: 75vh; }
+  .bottom { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .board { grid-template-columns: 1fr; }
+  .room-head h2 { font-size: 1.5rem; }
+  .stats { gap: 12px; }
+  .panel.is-max { inset: 0; border-radius: 0; }
+}
+</style>
+</head>
+<body>
+<div class="login" id="login" hidden>
+  <div class="card-l">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><h1>agents-room</h1></div>
+    <p>Masayı izlemek için admin ya da observer token'ınızı girin. Sunucu makinesinde <code>server/data/admin.token</code> dosyasındadır.</p>
+    <form id="loginForm">
+      <input type="password" id="tokenInput" placeholder="ar_…" autocomplete="off" aria-label="Token">
+      <button class="btn" type="submit">Giriş yap</button>
+    </form>
+    <p class="error-text" id="loginErr" hidden></p>
+  </div>
+</div>
+
+<div class="shell" id="app" hidden>
+  <aside class="rail">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><h1>agents-room</h1></div>
+    <section>
+      <h2>Odalar</h2>
+      <input type="search" class="room-search" id="roomSearch" placeholder="Oda ara…" aria-label="Oda ara">
+      <ul class="room-list" id="rooms"></ul>
+      <div class="room-group" id="closedGroup" hidden>
+        <button type="button" id="closedToggle" aria-expanded="false"></button>
+        <ul class="room-list closed" id="closedRooms" hidden></ul>
+      </div>
+    </section>
+    <div class="rail-foot">
+      <span class="live" id="live"><i></i><span>bağlanıyor</span></span>
+      <span id="me"></span>
+      <button class="btn ghost small" id="logout">Çıkış yap</button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="room-head">
+      <div>
+        <h2 id="roomName">—</h2>
+        <p id="roomTopic"></p>
+        <div class="repo" id="roomRepo"></div>
+      </div>
+      <div class="head-actions">
+        <div class="stats" id="stats"></div>
+        <button class="btn danger small" id="closeRoomBtn" hidden>Odayı kapat</button>
+      </div>
+    </div>
+    <div class="closed-banner" id="closedBanner" hidden>
+      <span id="closedText"></span>
+      <button class="btn ghost small" id="reopenBtn">Odayı yeniden aç</button>
+    </div>
+
+    <div class="top">
+      <section class="panel" aria-labelledby="h-table">
+        <header><h3 id="h-table">Masadakiler</h3><div class="head-actions"><small id="onlineCount"></small><button type="button" class="icon-btn" data-max aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg><span>Tam ekran</span></button></div></header>
+        <div class="table-wrap">
+          <div class="stage" id="stage"></div>
+          <ul class="roster" id="roster"></ul>
+        </div>
+      </section>
+
+      <section class="panel feed" aria-labelledby="h-feed">
+        <header><h3 id="h-feed">Konuşma</h3><div class="head-actions"><small>Markdown desteklenir</small><button type="button" class="icon-btn" data-max aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg><span>Tam ekran</span></button></div></header>
+        <div class="msgs" id="msgs" aria-live="polite"></div>
+        <form class="composer" id="composer">
+          <div class="chips" id="chips"></div>
+          <div class="compose-row">
+            <textarea id="msgInput" rows="1" placeholder="Mesaj yazın…" aria-label="Mesaj"></textarea>
+            <button class="btn" type="submit">Gönder</button>
+          </div>
+          <div class="hint">Enter gönderir · Shift+Enter yeni satır</div>
+        </form>
+      </section>
+    </div>
+
+    <section class="panel" aria-labelledby="h-board">
+      <header>
+        <h3 id="h-board">Görev panosu</h3>
+        <div class="board-tools"><label>Plan <select id="planFilter"><option value="">Tümü</option></select></label><button type="button" class="icon-btn" data-max aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg><span>Tam ekran</span></button></div>
+      </header>
+      <div class="board" id="board"></div>
+    </section>
+
+    <div class="bottom">
+      <section class="panel" aria-labelledby="h-err">
+        <header><h3 id="h-err">Hatalar ve uyarılar</h3></header>
+        <ul class="rows" id="errors"></ul>
+      </section>
+      <section class="panel" aria-labelledby="h-res">
+        <header><h3 id="h-res">Dosya rezervasyonları</h3></header>
+        <ul class="rows" id="reservations"></ul>
+      </section>
+    </div>
+  </main>
+</div>
+
+<dialog id="closeDlg" aria-labelledby="closeTitle">
+  <div class="dlg-head"><div><h3 id="closeTitle">Odayı kapat</h3><div class="sub" id="closeSub"></div></div></div>
+  <form class="confirm-body" id="closeForm" method="dialog">
+    <p style="margin:0">Oda kapatılınca:</p>
+    <ul>
+      <li>açık, alınmış ve incelemedeki görevler iptal edilir;</li>
+      <li>masadaki agent'lara "masadan kalkın" bildirimi gider, yeni oturum açmazlar;</li>
+      <li>konuşma ve görev geçmişi silinmez; odayı sonra yeniden açabilirsiniz.</li>
+    </ul>
+    <textarea id="closeReason" placeholder="Kapatma nedeni (isteğe bağlı, agent'lar görür)"></textarea>
+    <div class="confirm-actions">
+      <button type="button" class="btn ghost" id="closeCancel">Vazgeç</button>
+      <button type="submit" class="btn danger solid" id="closeConfirm">Odayı kapat</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="taskDlg" aria-labelledby="dlgTitle">
+  <div class="dlg-head">
+    <div><h3 id="dlgTitle"></h3><div class="sub" id="dlgSub"></div></div>
+    <button class="btn ghost small" id="dlgClose" aria-label="Kapat">Kapat</button>
+  </div>
+  <div class="dlg-body" id="dlgBody"></div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const hhmm = (ts) => new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+const dayOf = (ts) => new Date(ts).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
+const ago = (ts) => {
+  if (!ts) return 'hiç görülmedi';
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return 'az önce';
+  if (s < 3600) return `${Math.round(s / 60)} dk önce`;
+  if (s < 86400) return `${Math.round(s / 3600)} sa önce`;
+  return `${Math.round(s / 86400)} gün önce`;
+};
+const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+const STATUS = {
+  working: { v: '--working', t: 'çalışıyor' }, idle: { v: '--idle', t: 'boşta' }, blocked: { v: '--blocked', t: 'engelli' },
+  error: { v: '--error', t: 'hata' }, offline: { v: '--offline', t: 'çevrimdışı' },
+};
+const TASK_STATUS = {
+  open: ['Açık', '--idle'], claimed: ['Alındı', '--working'], in_progress: ['Çalışılıyor', '--working'], review: ['İncelemede', '--blocked'],
+  done: ['Bitti', '--done'], failed: ['Başarısız', '--error'], cancelled: ['İptal', '--offline'],
+};
+const KIND = { 'claude-code': 'Claude', codex: 'Codex', hermes: 'Hermes', gemini: 'Gemini', human: 'İnsan', other: 'Agent' };
+const ROLE = { orchestrator: 'orkestratör', worker: 'işçi', observer: 'gözlemci', admin: 'yönetici' };
+const LANES = [
+  { title: 'Açık', statuses: ['open'], c: '--idle' },
+  { title: 'Üzerinde çalışılıyor', statuses: ['claimed', 'in_progress'], c: '--working' },
+  { title: 'İncelemede', statuses: ['review'], c: '--blocked' },
+  { title: 'Bitti', statuses: ['done'], c: '--done' },
+  { title: 'Başarısız / iptal', statuses: ['failed', 'cancelled'], c: '--error', collapsible: true },
+];
+
+let state = null;
+let room = store.get('ar_room') || 'lobby';
+let msgs = [];
+let failedOpen = false;
+
+const hue = (name) => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+const initials = (name) => { const p = String(name).split(/[-_.\s]+/).filter(Boolean); return ((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : p[0]?.[1] || '')).toUpperCase(); };
+const agentOf = (name) => state?.agents.find((a) => a.name === name);
+
+// ---------- markdown ----------
+marked.setOptions({ gfm: true, breaks: true });
+function renderMd(src) {
+  const html = DOMPurify.sanitize(marked.parse(String(src ?? '')), { ADD_ATTR: ['target'] });
+  const box = document.createElement('div');
+  box.className = 'md';
+  box.innerHTML = html;
+  box.querySelectorAll('a[href]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+  decorate(box);
+  return box;
+}
+/** Kod blokları dışındaki metinde @isim ve #N'yi işaretle. */
+function decorate(root) {
+  const me = state?.me?.name;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement.closest('code, pre, a') ? NodeFilter.FILTER_REJECT : /[@#]/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    const text = n.nodeValue;
+    const re = /(^|[^\w@#])(@([a-z0-9][a-z0-9._-]{1,47})|#(\d{1,6})\b)/gi;
+    let m;
+    while ((m = re.exec(text))) {
+      const start = m.index + m[1].length;
+      frag.append(text.slice(last, start));
+      if (m[3]) {
+        const s = document.createElement('span');
+        s.className = 'mention' + (m[3].toLowerCase() === me ? ' me' : '');
+        s.textContent = m[2];
+        frag.append(s);
+      } else {
+        const a = document.createElement('a');
+        a.className = 'task-link'; a.href = '#'; a.dataset.task = m[4]; a.textContent = m[2];
+        frag.append(a);
+      }
+      last = start + m[2].length;
+    }
+    frag.append(text.slice(last));
+    n.replaceWith(frag);
+  }
+}
+
+// ---------- API ----------
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: 'same-origin', headers: { 'content-type': 'application/json' }, ...opts });
+  if (r.status === 401 || r.status === 403) { showLogin(); throw new Error('yetkisiz'); }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function showLogin() { $('app').hidden = true; $('login').hidden = false; $('tokenInput').focus(); }
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: $('tokenInput').value.trim() }) });
+  if (!r.ok) { $('loginErr').hidden = false; $('loginErr').textContent = (await r.json()).error; return; }
+  $('login').hidden = true; boot();
+});
+$('logout').addEventListener('click', async () => { await fetch('/api/logout', { method: 'POST' }); location.reload(); });
+
+// ---------- odalar ----------
+let closedOpen = false;
+const roomItem = (r) => `<li><button data-room="${esc(r.name)}" aria-current="${r.name === room}">
+    <span class="rn">${esc(r.name)}</span><span class="rc" title="üye · açık görev">${r.members} · ${r.open_tasks}</span>
+    ${r.topic ? `<span class="rt">${esc(r.topic)}</span>` : ''}</button></li>`;
+function renderRooms() {
+  if (!state.rooms.some((r) => r.name === room)) room = state.rooms.find((r) => !r.closed_at)?.name || 'lobby';
+  const q = $('roomSearch').value.trim().toLocaleLowerCase('tr');
+  const match = (r) => !q || `${r.name} ${r.topic || ''}`.toLocaleLowerCase('tr').includes(q);
+  const open = state.rooms.filter((r) => !r.closed_at && match(r));
+  const closed = state.rooms.filter((r) => r.closed_at && match(r));
+  $('rooms').innerHTML = open.map(roomItem).join('') || `<li class="empty">${q ? 'Eşleşen açık oda yok.' : 'Açık oda yok.'}</li>`;
+  $('closedGroup').hidden = !closed.length;
+  const expanded = closedOpen || (q && closed.length > 0) || closed.some((r) => r.name === room);
+  $('closedToggle').textContent = `Kapalı odalar (${closed.length}) ${expanded ? '▾' : '▸'}`;
+  $('closedToggle').setAttribute('aria-expanded', String(expanded));
+  $('closedRooms').hidden = !expanded;
+  $('closedRooms').innerHTML = closed.map(roomItem).join('');
+}
+$('roomSearch').addEventListener('input', renderRooms);
+$('closedToggle').addEventListener('click', () => { closedOpen = !closedOpen; renderRooms(); });
+for (const id of ['rooms', 'closedRooms']) $(id).addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-room]');
+  if (!b || b.dataset.room === room) return;
+  room = b.dataset.room; store.set('ar_room', room); $('planFilter').value = '';
+  render(); loadMessages();
+});
+
+function currentRoom() { return state.rooms.find((r) => r.name === room); }
+function roomAgents() {
+  const names = new Set(currentRoom()?.member_names || []);
+  return state.agents.filter((a) => names.has(a.name)).sort((a, b) => (a.role === 'orchestrator' ? -1 : 0) - (b.role === 'orchestrator' ? -1 : 0) || a.name.localeCompare(b.name));
+}
+
+function openConsults() {
+  return (state.consults || []).filter((c) => c.room === room && c.status === 'open');
+}
+function renderHead() {
+  const r = currentRoom();
+  $('roomName').textContent = room;
+  $('roomTopic').textContent = r?.topic || '';
+  $('roomRepo').textContent = r?.repo ? `repo: ${r.repo}` : '';
+  const tasks = state.tasks.filter((t) => t.room === room);
+  const online = roomAgents().filter((a) => a.status !== 'offline').length;
+  const active = tasks.filter((t) => ['claimed', 'in_progress', 'review'].includes(t.status)).length;
+  const done = tasks.filter((t) => t.status === 'done').length;
+  const consults = openConsults();
+  const election = consults.find((c) => c.kind === 'election');
+  const stats = [[online, 'çevrimiçi'], [active, 'aktif görev'], [done, 'biten görev']];
+  if (consults.length) stats.push([consults.length, 'açık istişare', consults.map((c) => `C${c.id}: ${c.replies.length}/${c.invitees.length} yanıt`).join('\n')]);
+  const hasOrch = roomAgents().some((a) => a.role === 'orchestrator');
+  if (r?.chair || election || hasOrch) stats.unshift([r?.chair ? `👑 ${esc(r.chair)}` : election ? '🗳️' : '—', election ? 'başkan seçimi sürüyor' : 'başkan', election ? `C${election.id}: ${election.replies.length}/${election.invitees.length} oy` : '']);
+  $('stats').innerHTML = stats.map(([n, l, t]) => `<div class="stat${typeof n === 'string' ? ' txt' : ''}"${t ? ` title="${esc(t)}"` : ''}><b>${n}</b><span>${l}</span></div>`).join('');
+  const isAdmin = state.me?.role === 'admin';
+  const closed = !!r?.closed_at;
+  $('closeRoomBtn').hidden = !isAdmin || closed || room === 'lobby';
+  $('closedBanner').hidden = !closed;
+  $('reopenBtn').hidden = !isAdmin;
+  if (closed) $('closedText').textContent = `🔒 Bu oda ${new Date(r.closed_at).toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })} tarihinde ${r.closed_by} tarafından kapatıldı. Geçmiş okunabilir; yeni mesaj ve görev kabul edilmez.`;
+  $('composer').hidden = closed || !['admin', 'orchestrator'].includes(state.me?.role);
+}
+
+// ---------- oda kapatma ----------
+const closeDlg = $('closeDlg');
+$('closeRoomBtn').addEventListener('click', () => {
+  const open = state.tasks.filter((t) => t.room === room && ['open', 'claimed', 'in_progress', 'review'].includes(t.status)).length;
+  $('closeTitle').textContent = `"${room}" odasını kapat`;
+  $('closeSub').textContent = `${roomAgents().length} üye · ${open} açık görev iptal edilecek`;
+  $('closeReason').value = '';
+  closeDlg.showModal();
+});
+$('closeCancel').addEventListener('click', () => closeDlg.close());
+$('closeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('closeConfirm').disabled = true;
+  try {
+    await api(`/api/rooms/${encodeURIComponent(room)}/close`, { method: 'POST', body: JSON.stringify({ reason: $('closeReason').value.trim() || undefined }) });
+    closeDlg.close();
+    await refresh();
+  } catch (err) { alert(err.message); }
+  finally { $('closeConfirm').disabled = false; }
+});
+$('reopenBtn').addEventListener('click', async () => {
+  await api(`/api/rooms/${encodeURIComponent(room)}/reopen`, { method: 'POST', body: '{}' });
+  await refresh();
+});
+
+// ---------- masa ----------
+function avatarHtml(a, size) {
+  const st = STATUS[a?.status] || STATUS.offline;
+  return `<span class="avatar" style="--h:${hue(a?.name || '')};--st:var(${st.v})" aria-hidden="true">${esc(initials(a?.name || '?'))}</span>`;
+}
+function renderTable() {
+  const agents = roomAgents();
+  const chair = currentRoom()?.chair;
+  const n = Math.max(agents.length, 1);
+  const open = state.tasks.filter((t) => t.room === room && !['done', 'failed', 'cancelled'].includes(t.status)).length;
+  let html = `<div class="felt"><div><b>${open}</b><span>açık görev</span></div></div>`;
+  agents.forEach((a, i) => {
+    const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const x = 50 + Math.cos(ang) * 39, y = 50 + Math.sin(ang) * 39;
+    html += `<div class="seat" data-status="${a.status}" style="left:${x}%;top:${y}%" title="${esc(`${a.name} · ${KIND[a.kind] || a.kind} · ${ROLE[a.role] || a.role} · ${STATUS[a.status]?.t} · ${a.machine || ''}`)}">
+      ${avatarHtml(a)}<div class="nm">${a.name === chair ? '<span class="crown" title="Başkan">👑</span>' : ''}${esc(a.name)}</div></div>`;
+  });
+  if (!agents.length) html += '<p class="empty" style="position:absolute;bottom:0;width:100%;text-align:center">Bu masada kimse yok. Ekip kurmak için: <code>node scripts/team.ts</code></p>';
+  $('stage').innerHTML = html;
+  $('onlineCount').textContent = `${agents.filter((a) => a.status !== 'offline').length}/${agents.length} çevrimiçi`;
+  $('roster').innerHTML = agents.map((a) => {
+    const st = STATUS[a.status] || STATUS.offline;
+    const act = a.status === 'offline' ? ago(a.last_seen) : a.activity || st.t;
+    return `<li><span class="dot" style="--st:var(${st.v})" title="${st.t}"></span>
+      <span class="who"><b>${esc(a.name)}${a.name === chair ? ' <span class="crown" title="Başkan">👑</span>' : ''}</b><span>${esc(act)}</span></span>
+      <span class="kind">${esc(KIND[a.kind] || a.kind)} · ${esc(a.name === chair ? 'başkan' : ROLE[a.role] || a.role)}</span></li>`;
+  }).join('');
+  $('chips').innerHTML = agents.filter((a) => a.role !== 'admin').map((a) => `<button type="button" class="chip" data-mention="${esc(a.name)}">@${esc(a.name)}</button>`).join('');
+}
+$('chips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mention]');
+  if (!b) return;
+  const ta = $('msgInput');
+  ta.value = `${ta.value.replace(/\s*$/, '')}${ta.value ? ' ' : ''}@${b.dataset.mention} `;
+  ta.focus(); autosize();
+});
+
+// ---------- konuşma ----------
+const ICON = (body) => (body.match(/^(✅|❌|⚠️|👍|🔁|🚫|↪️|🔓|🔒|🏁|⏰|👑|🗳️|📥|⌛)/u) || [])[1] || '•';
+function messageNode(m, prev) {
+  const isSys = m.sender === 'system';
+  const frag = document.createDocumentFragment();
+  if (!prev || dayOf(prev.created_at) !== dayOf(m.created_at)) {
+    const d = document.createElement('div'); d.className = 'day'; d.textContent = dayOf(m.created_at); frag.append(d);
+  }
+  if (isSys) {
+    const row = document.createElement('div');
+    const join = /(joined|left) the table$|masaya katıldı|masadan ayrıldı/.test(m.body);
+    row.className = 'event' + (join ? ' join' : '');
+    const ic = ICON(m.body);
+    const body = document.createElement('div');
+    body.append(renderMd(ic === '•' ? m.body : m.body.slice(ic.length).trim()));
+    row.innerHTML = `<span class="ic" aria-hidden="true">${ic}</span>`;
+    row.append(body);
+    row.insertAdjacentHTML('beforeend', `<time>${hhmm(m.created_at)}</time>`);
+    frag.append(row);
+    return frag;
+  }
+  const a = agentOf(m.sender);
+  const cont = prev && prev.sender === m.sender && prev.sender !== 'system' && m.created_at - prev.created_at < 5 * 60_000 && !m.recipient && !prev.recipient;
+  const row = document.createElement('div');
+  const meMentioned = state?.me && (m.mentions || []).includes(state.me.name) && m.sender !== state.me.name;
+  row.className = `msg${cont ? ' cont' : ''}${m.kind === 'dm' ? ' dm' : ''}${meMentioned ? ' me-mentioned' : ''}`;
+  row.innerHTML = `${avatarHtml(a || { name: m.sender, status: 'idle' })}<div><div class="meta"><b>${esc(m.sender)}</b>${a ? `<span class="role">${esc(KIND[a.kind] || '')} ${esc(ROLE[a.role] || '')}</span>` : ''}${m.recipient ? `<span class="to">→ ${esc(m.recipient)} (özel)</span>` : ''}<time>${hhmm(m.created_at)}</time></div></div>`;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble' + (/^🗳️/u.test(m.body) ? ' consult' : /^💬 \*\*C\d+\*\*/u.test(m.body) ? ' consult-reply' : '');
+  bubble.append(renderMd(m.body));
+  row.lastElementChild.append(bubble);
+  if (m.body.split('\n').length > 16 || m.body.length > 1400) {
+    bubble.classList.add('clamped');
+    const more = document.createElement('button');
+    more.className = 'more'; more.type = 'button'; more.textContent = 'Devamını göster';
+    more.onclick = () => { bubble.classList.toggle('clamped'); more.textContent = bubble.classList.contains('clamped') ? 'Devamını göster' : 'Daralt'; };
+    row.lastElementChild.append(more);
+  }
+  frag.append(row);
+  return frag;
+}
+// Geçmiş sayfa sayfa yüklenir: önce son PAGE mesaj, yukarı kaydırdıkça daha eskileri.
+const PAGE = 40;
+let hasOlder = false;
+let loadingOlder = false;
+let loadToken = 0;
+function edgeHtml() {
+  if (!msgs.length) return '';
+  return `<div class="history-edge" id="historyEdge">${hasOlder ? (loadingOlder ? 'Daha eski mesajlar yükleniyor…' : '↑ Daha eski mesajlar için yukarı kaydırın') : 'Konuşmanın başı'}</div>`;
+}
+function renderAllMessages() {
+  const box = $('msgs');
+  box.innerHTML = edgeHtml();
+  if (!msgs.length) {
+    box.innerHTML = '<p class="empty">Bu masada henüz konuşma yok. Hedefinizi yazın ya da <code>node scripts/team.ts</code> ile bir ekip başlatın.</p>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  msgs.forEach((m, i) => frag.append(messageNode(m, msgs[i - 1])));
+  box.append(frag);
+}
+function appendMessages(list) {
+  const box = $('msgs');
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const fresh = list.filter((m) => m.room === room && !msgs.some((x) => x.id === m.id));
+  if (!fresh.length) return;
+  if (!msgs.length) { msgs.push(...fresh); renderAllMessages(); box.scrollTop = box.scrollHeight; return; }
+  for (const m of fresh) { box.append(messageNode(m, msgs[msgs.length - 1])); msgs.push(m); }
+  if (near) box.scrollTop = box.scrollHeight;
+}
+async function loadMessages() {
+  const my = ++loadToken;
+  msgs = []; hasOlder = false; userScrolled = false; $('msgs').innerHTML = '';
+  const page = await api(`/api/rooms/${encodeURIComponent(room)}/messages?limit=${PAGE}`);
+  if (my !== loadToken) return;
+  msgs = page; hasOlder = page.length === PAGE;
+  renderAllMessages();
+  const box = $('msgs');
+  box.scrollTop = box.scrollHeight;
+  // Kısa geçmişte kaydırma çubuğu yoksa bir sayfa daha getir
+  if (hasOlder && box.scrollHeight <= box.clientHeight) loadOlder();
+}
+async function loadOlder() {
+  if (!hasOlder || loadingOlder || !msgs.length) return;
+  loadingOlder = true;
+  const box = $('msgs');
+  const edge = $('historyEdge'); if (edge) edge.textContent = 'Daha eski mesajlar yükleniyor…';
+  const my = loadToken;
+  try {
+    const older = await api(`/api/rooms/${encodeURIComponent(room)}/messages?limit=${PAGE}&before_id=${msgs[0].id}`);
+    if (my !== loadToken) return;
+    hasOlder = older.length === PAGE;
+    const prevHeight = box.scrollHeight, prevTop = box.scrollTop;
+    msgs = [...older, ...msgs];
+    loadingOlder = false;
+    renderAllMessages();
+    box.scrollTop = box.scrollHeight - prevHeight + prevTop; // okuduğunuz yer sabit kalır
+  } finally { loadingOlder = false; const e = $('historyEdge'); if (e) e.outerHTML = edgeHtml(); }
+}
+let userScrolled = false;
+for (const ev of ['wheel', 'touchmove', 'keydown', 'pointerdown']) $('msgs').addEventListener(ev, () => (userScrolled = true), { passive: true });
+$('msgs').addEventListener('scroll', () => { if (userScrolled && $('msgs').scrollTop < 120) loadOlder(); }, { passive: true });
+$('msgs').addEventListener('click', (e) => {
+  const a = e.target.closest('[data-task]');
+  if (a) { e.preventDefault(); openTask(Number(a.dataset.task)); }
+});
+
+const ta = $('msgInput');
+function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 220) + 'px'; }
+ta.addEventListener('input', autosize);
+ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
+$('composer').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = ta.value.trim();
+  if (!body) return;
+  ta.disabled = true;
+  try { await api(`/api/rooms/${encodeURIComponent(room)}/messages`, { method: 'POST', body: JSON.stringify({ body }) }); ta.value = ''; autosize(); }
+  finally { ta.disabled = false; ta.focus(); }
+});
+
+// ---------- görev panosu ----------
+function renderBoard() {
+  const all = state.tasks.filter((t) => t.room === room);
+  const plans = all.filter((t) => all.some((k) => k.parent_id === t.id));
+  const sel = $('planFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Tümü</option>' + plans.map((p) => `<option value="${p.id}">#${p.id} ${esc(p.title.slice(0, 48))}</option>`).join('');
+  sel.value = plans.some((p) => String(p.id) === cur) ? cur : '';
+  const pf = sel.value ? Number(sel.value) : null;
+  const tasks = pf ? all.filter((t) => t.id === pf || t.parent_id === pf) : all;
+  $('board').innerHTML = LANES.map((l) => {
+    const items = tasks.filter((t) => l.statuses.includes(t.status)).sort((a, b) => b.updated_at - a.updated_at);
+    const collapsed = l.collapsible && !failedOpen;
+    const head = l.collapsible
+      ? `<h4><button type="button" class="toggle" data-toggle aria-expanded="${!collapsed}">${l.title} ${collapsed ? '▸' : '▾'}</button><em>${items.length}</em></h4>`
+      : `<h4><span>${l.title}</span><em>${items.length}</em></h4>`;
+    return `<div class="lane${collapsed ? ' collapsed' : ''}">${head}<ol>${items.map((t) => card(t, l, all)).join('') || '<li class="empty">Boş</li>'}</ol></div>`;
+  }).join('');
+}
+function card(t, lane, all) {
+  const isPlan = all.some((k) => k.parent_id === t.id);
+  const kids = all.filter((k) => k.parent_id === t.id);
+  const meta = [
+    t.assignee ? `@${esc(t.assignee)}` : 'atanmamış',
+    isPlan ? `plan · ${kids.filter((k) => k.status === 'done').length}/${kids.length}` : t.parent_id ? `plan #${t.parent_id}` : '',
+    t.depends_on.length && t.status === 'open' ? `bekler ${t.depends_on.map((d) => '#' + d).join(' ')}` : '',
+    t.lease_until && ['claimed', 'in_progress'].includes(t.status) ? `${Math.max(0, Math.round((t.lease_until - Date.now()) / 60000))} dk kira` : '',
+  ].filter(Boolean).map((s) => `<span>${s}</span>`).join('');
+  return `<li><button type="button" class="card${isPlan ? ' plan' : ''}" style="--c:var(${TASK_STATUS[t.status][1]})" data-task="${t.id}">
+    <div class="t"><span>#${t.id}</span> ${esc(t.title)}</div><div class="m">${meta}</div>
+    ${t.progress && !['done', 'cancelled'].includes(t.status) ? `<div class="p">${esc(t.progress)}</div>` : ''}</button></li>`;
+}
+$('board').addEventListener('click', (e) => {
+  if (e.target.closest('[data-toggle]')) { failedOpen = !failedOpen; renderBoard(); return; }
+  const b = e.target.closest('[data-task]');
+  if (b) openTask(Number(b.dataset.task));
+});
+$('planFilter').addEventListener('change', renderBoard);
+
+// ---------- görev ayrıntısı ----------
+const dlg = $('taskDlg');
+$('dlgClose').onclick = () => dlg.close();
+dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+async function openTask(id) {
+  let t = state.tasks.find((x) => x.id === id);
+  let tree = null;
+  try { tree = await api(`/api/tasks/${id}/tree`); t = tree; } catch { if (!t) return; }
+  const [stLabel, stVar] = TASK_STATUS[t.status];
+  $('dlgTitle').textContent = `#${t.id} ${t.title}`;
+  $('dlgSub').innerHTML = [
+    `<span class="pill" style="--c:var(${stVar})">${stLabel}</span>`,
+    t.assignee ? `@${esc(t.assignee)}` : 'atanmamış',
+    `oluşturan ${esc(t.created_by)}`, `öncelik P${t.priority}`,
+    t.parent_id ? `<a href="#" class="task-link" data-task="${t.parent_id}">plan #${t.parent_id}</a>` : '',
+    t.depends_on.length ? `bağımlı: ${t.depends_on.map((d) => `<a href="#" class="task-link" data-task="${d}">#${d}</a>`).join(' ')}` : '',
+    t.branch ? `<code>${esc(t.branch)}</code>` : '',
+    `güncellendi ${ago(t.updated_at)}`,
+  ].filter(Boolean).map((s) => `<span>${s}</span>`).join('');
+  const body = $('dlgBody');
+  body.innerHTML = '';
+  const section = (title, node) => { const s = document.createElement('section'); s.innerHTML = `<h4>${title}</h4>`; s.append(node); body.append(s); };
+  if (t.description) section('Açıklama', renderMd(t.description));
+  if (t.progress) section('Son ilerleme', renderMd(t.progress));
+  if (t.result) section('Sonuç', renderMd(t.result));
+  if (t.error) { const n = renderMd(t.error); n.classList.add('error-text'); section('Hata / geri bildirim', n); }
+  if (t.artifacts?.length) {
+    const ul = document.createElement('ul'); ul.className = 'artifacts';
+    ul.innerHTML = t.artifacts.map((a) => `<li><b>${esc(a.type)}</b> ${/^https?:/.test(a.ref) ? `<a href="${esc(a.ref)}" target="_blank" rel="noopener noreferrer">${esc(a.ref)}</a>` : `<code>${esc(a.ref)}</code>`}${a.description ? ` — ${esc(a.description)}` : ''}</li>`).join('');
+    section('Çıktılar', ul);
+  }
+  if (tree?.children?.length) {
+    const ul = document.createElement('ul'); ul.className = 'kids';
+    ul.innerHTML = tree.children.map((k) => `<li><button type="button" data-task="${k.id}" style="--c:var(${TASK_STATUS[k.status][1]})"><b>#${k.id}</b> ${esc(k.title)} <span style="color:var(--muted)">· ${TASK_STATUS[k.status][0]}${k.assignee ? ' · @' + esc(k.assignee) : ''}</span></button></li>`).join('');
+    section(`Alt görevler (${tree.children.filter((k) => k.status === 'done').length}/${tree.children.length})`, ul);
+  }
+  if (state.me && ['admin', 'orchestrator'].includes(state.me.role) && !['cancelled'].includes(t.status)) {
+    const box = document.createElement('div'); box.className = 'dlg-actions';
+    box.innerHTML = `<textarea id="fb" placeholder="Geri bildirim (yeniden açarken agent bunu görür)"></textarea>
+      ${t.status === 'review' ? '<button class="btn small" data-act="approve">Onayla</button>' : ''}
+      ${['failed', 'review', 'done'].includes(t.status) ? '<button class="btn ghost small" data-act="reopen">Yeniden aç</button>' : ''}
+      ${['open', 'claimed', 'in_progress', 'review'].includes(t.status) ? '<button class="btn ghost small" data-act="cancel">İptal et</button>' : ''}`;
+    box.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      const feedback = box.querySelector('#fb').value.trim() || undefined;
+      if (b.dataset.act === 'reopen' && !feedback) { box.querySelector('#fb').focus(); return; }
+      if (b.dataset.act === 'cancel' && !confirm(`#${t.id} iptal edilsin mi?${tree?.children?.length ? ' Alt görevler de iptal edilir.' : ''}`)) return;
+      await api(`/api/tasks/${t.id}/review`, { method: 'POST', body: JSON.stringify({ action: b.dataset.act, feedback }) });
+      await refresh(); openTask(t.id);
+    });
+    section('İşlemler', box);
+  }
+  if (!dlg.open) dlg.showModal();
+  body.scrollTop = 0;
+}
+dlg.addEventListener('click', (e) => { const a = e.target.closest('[data-task]'); if (a && a.closest('#dlgBody, #dlgSub')) { e.preventDefault(); openTask(Number(a.dataset.task)); } });
+
+// ---------- hatalar & rezervasyonlar ----------
+function renderSide() {
+  const warn = state.events.filter((e) => e.level !== 'info');
+  $('errors').innerHTML = warn.length
+    ? warn.slice(0, 40).map((e) => `<li><time>${hhmm(e.ts)}</time><span><span class="${e.level === 'error' ? 'err' : 'warn'}">${esc(e.agent || 'sistem')}</span> ${esc(e.type)} ${esc(e.data?.error || e.data?.message || e.data?.activity || (e.data?.id ? '#' + e.data.id : ''))}</span></li>`).join('')
+    : '<li class="empty">Hata yok. Kiralaması dolan görevler ve düşen agent\'lar burada görünür.</li>';
+  $('reservations').innerHTML = state.reservations.length
+    ? state.reservations.map((r) => `<li><time>${Math.max(0, Math.round((r.expires_at - Date.now()) / 60000))} dk</time><span><code>${esc(r.pattern)}</code> · @${esc(r.agent)} · ${r.exclusive ? 'özel' : 'paylaşımlı'}${r.task_id ? ` · <a href="#" class="task-link" data-task="${r.task_id}">#${r.task_id}</a>` : ''}</span></li>`).join('')
+    : '<li class="empty">Şu an ayrılmış dosya yok.</li>';
+}
+$('reservations').addEventListener('click', (e) => { const a = e.target.closest('[data-task]'); if (a) { e.preventDefault(); openTask(Number(a.dataset.task)); } });
+
+function render() { renderRooms(); renderHead(); renderTable(); renderBoard(); renderSide(); }
+
+// ---------- tam ekran ----------
+function setMax(panel, on) {
+  document.querySelectorAll('.panel.is-max').forEach((p) => { if (p !== panel) setMax(p, false); });
+  panel.classList.toggle('is-max', on);
+  document.body.classList.toggle('has-max', !!document.querySelector('.panel.is-max'));
+  const b = panel.querySelector('[data-max]');
+  b.setAttribute('aria-pressed', String(on));
+  b.querySelector('span').textContent = on ? 'Küçült' : 'Tam ekran';
+  if (panel.classList.contains('feed')) { const box = $('msgs'); requestAnimationFrame(() => (box.scrollTop = box.scrollHeight)); }
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-max]');
+  if (b) { const p = b.closest('.panel'); setMax(p, !p.classList.contains('is-max')); }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+  const p = document.querySelector('.panel.is-max');
+  if (p) setMax(p, false);
+});
+
+let timer = null;
+async function refresh() {
+  state = await api('/api/state');
+  $('me').textContent = state.me.name;
+  render();
+}
+const scheduleRefresh = () => { clearTimeout(timer); timer = setTimeout(refresh, 300); };
+
+function connectStream() {
+  const es = new EventSource('/api/stream');
+  const live = $('live');
+  es.onopen = () => { live.classList.add('on'); live.lastChild.textContent = 'canlı'; };
+  es.onerror = () => { live.classList.remove('on'); live.lastChild.textContent = 'yeniden bağlanıyor'; };
+  es.addEventListener('message', (e) => { appendMessages([JSON.parse(e.data)]); scheduleRefresh(); });
+  for (const t of ['task', 'agent', 'reservation', 'event', 'consult']) es.addEventListener(t, scheduleRefresh);
+}
+
+async function boot() {
+  try { await refresh(); } catch { return; }
+  $('app').hidden = false;
+  await loadMessages();
+  connectStream();
+  setInterval(refresh, 30000);
+}
+boot();
+</script>
+</body>
+</html>

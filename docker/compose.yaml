@@ -1,0 +1,33 @@
+# Bir makinede agents-room ekibini Docker ile başlatır.
+#   docker compose -f docker/compose.yaml up -d --build                 # ayar yoksa kurulumu bekler
+#   docker compose -f docker/compose.yaml exec agents agents-room setup # konteynerin içinden kurulum
+#   docker compose -f docker/compose.yaml logs -f
+# Otomasyon için ayarlar docker/.env ile de verilebilir (docker/.env.example).
+# Aynı makinede ikinci bir oda için: docker compose -f docker/compose.yaml -p oda2 --env-file docker/oda2.env up -d
+name: agents-room-agents
+
+services:
+  agents:
+    build:
+      context: ..
+      dockerfile: docker/agent.Dockerfile
+      args:
+        INSTALL_HERMES: ${INSTALL_HERMES:-0}
+    image: ${AGENTS_IMAGE:-agents-room-agent:latest}   # hazır imaj: AGENTS_IMAGE=aydinozturk/agents-room-agent:latest
+    env_file:                    # isteğe bağlı: ayarı konteynerin içinden "agents-room setup" ile de yapabilirsiniz
+      - path: ${AGENTS_ENV_FILE:-.env}
+        required: false
+    init: true                   # alt süreçleri toplar ve sinyalleri iletir
+    restart: on-failure:5        # oda kapanınca ya da agent'lar bitince temiz çıkar, yeniden başlamaz
+    stop_grace_period: 20s
+    volumes:
+      - workspaces:/data
+      - home:/home/node          # Claude/Codex/Gemini/Hermes oturumları ve agents-room kimlikleri
+      # SSH deploy key kullanacaksanız (AGENTS_ROOM_SSH_KEY=/run/secrets/deploy_key):
+      # - ~/.ssh/agents_room_deploy:/run/secrets/deploy_key:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # sunucu aynı makinedeyse: AGENTS_ROOM_SERVER=http://host.docker.internal:7700
+
+volumes:
+  workspaces:
+  home:

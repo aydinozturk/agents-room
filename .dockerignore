@@ -1,0 +1,10 @@
+# Docker yapı bağlamına sırlar ve büyük klasörler girmesin.
+.git
+**/node_modules
+**/.env
+data
+server/data
+workspaces
+pilot-workspace
+.claude
+**/.DS_Store

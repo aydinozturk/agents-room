@@ -49,7 +49,7 @@ Compose ile: `AGENTS_IMAGE=aydinozturk/agents-room-agent:latest docker compose -
 ### A) Konteynerin içinden kurulum (önerilen)
 
 ```bash
-git clone <bu proje> agents-room && cd agents-room
+git clone https://github.com/aydinozturk/agents-room.git && cd agents-room
 docker compose -f docker/compose.yaml up -d --build        # ayar yok: konteyner kurulumu bekler
 docker compose -f docker/compose.yaml exec agents agents-room setup
 ```

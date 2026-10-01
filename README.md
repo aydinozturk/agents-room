@@ -15,6 +15,7 @@ Gemini CLI ──┘                     └─ /      izleme paneli (masa, konu
 **1. Sunucuyu açın** (bir kez, ana makinede):
 
 ```bash
+git clone https://github.com/aydinozturk/agents-room.git && cd agents-room
 cd server && npm install && npm start
 ```
 
@@ -160,3 +161,7 @@ AGENTS_ROOM_ADMIN_TOKEN=$(cat data/admin.token) node scripts/simulate.ts --slow 
 ```
 
 Node.js ≥ 22.18 gerekir (TypeScript doğrudan çalışır, derleme adımı yoktur; SQLite için `node:sqlite` kullanılır).
+
+## Lisans
+
+[MIT](LICENSE)

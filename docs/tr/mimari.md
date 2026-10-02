@@ -1,5 +1,7 @@
 # agents-room mimarisi
 
+[English](../architecture.md) · **Türkçe**
+
 Bu belge teknoloji seçimini, bileşenleri, veri modelini ve orkestrasyon akışını anlatır.
 Araştırma raporları: [01 protokol değerlendirmesi](research/01-protokol-degerlendirmesi.md) · [02 benzer çözümler ve referans mimari](research/02-benzer-cozumler-ve-referans-mimari.md) · [03 istemci entegrasyonu](research/03-istemci-entegrasyonu.md)
 
@@ -89,7 +91,7 @@ Görev durumları: `open`→`submitted`, `claimed`/`in_progress`→`working`, `r
 
 ## 5. Orkestratör akışı
 
-**başkan → taslak → istişare → dağıt → izle → incele → sentezle.** Ayrıntılar [skills/agents-room/references/orchestrator.md](../skills/agents-room/references/orchestrator.md) içinde.
+**başkan → taslak → istişare → dağıt → izle → incele → sentezle.** Ayrıntılar [skills/agents-room/references/orchestrator.md](../../skills/agents-room/references/orchestrator.md) içinde.
 
 1. `list_agents`: kim çevrimiçi, yetenekleri ne. `room_join` odanın başkanını da gösterir.
 2. Taslak: 3-8 alt görev. Her biri ayrık dosya kümesine dokunur. Paylaşılan dosyalar ayrı bir temel görevde toplanır.
@@ -126,7 +128,7 @@ Bir odada birden çok orkestratör olabilir; planın sahibi tek bir **başkandı
 
 ## 6. Ortak repo ve çakışma yönetimi
 
-[git-rules.md](../skills/agents-room/references/git-rules.md) dosyasının özeti:
+[git-rules.md](../../skills/agents-room/references/git-rules.md) dosyasının özeti:
 - Her görev için ayrı worktree ve `ar/<oda>/t<ID>-<slug>` adlı branch. Branch'in tek sahibi görevi alan agent'tır.
 - `files_reserve`: glob desenli, süreli, özel ya da paylaşımlı, **tavsiye niteliğinde** bir kilit. Çakışma varsa rezervasyon verilmez ve sahibi raporlanır. Görev kapanınca kilit otomatik bırakılır.
 - Commit trailer'ları: `Task: #ID`, `Agent: <ad>`. Push öncesi `rebase origin/main`. main'e doğrudan push ve lease'siz force-push yasak.
@@ -143,7 +145,7 @@ Bir odada birden çok orkestratör olabilir; planın sahibi tek bir **başkandı
 
 ## 8. Dil kuralı
 
-Agent'ların okuduğu her metin İngilizcedir: skill (`skills/agents-room/`), rol prompt'ları, araç açıklamaları, sunucu talimatları, hata mesajları ve odaya düşen sistem bildirimleri. Modeller İngilizce talimatlarla daha tutarlı çalışıyor. İnsanlara yönelik kısımlar Türkçe kalır: panel arayüzü, README ve `docs/`. Agent'lar insanlara onların yazdığı dilde yanıt verir.
+Agent'ların okuduğu her metin İngilizcedir: skill (`skills/agents-room/`), rol prompt'ları, araç açıklamaları, sunucu talimatları, hata mesajları ve odaya düşen sistem bildirimleri. Modeller İngilizce talimatlarla daha tutarlı çalışıyor. İnsanlara yönelik kısımlarda panel arayüzü Türkçedir. README ve belgeler İngilizcedir; Türkçe sürümleri `README.tr.md` ve `docs/tr/` altındadır. Agent'lar insanlara onların yazdığı dilde yanıt verir.
 
 ## 9. Bilinen sınırlar ve yol haritası
 

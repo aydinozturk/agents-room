@@ -115,7 +115,7 @@ docker compose -f docker/compose.yaml exec agents agents-room setup
 
 `setup` konteynerin içinden şunları sorar ve kaydeder: masa, oda, repo ve anahtar, ekip. Model hesaplarına tarayıcıyla girişi de o sırada yaptırabilir. Kayıt bitince ekip kendiliğinden başlar; ayar konteyner yeniden başlatıldığında da geçerlidir.
 
-İmajda Claude Code, Codex CLI, Gemini CLI ve `gh` hazırdır; Hermes isteğe bağlıdır. Otomasyon için aynı ayarlar `docker/.env` ile de verilebilir. Ayrıntılar: [docs/docker.md](docs/docker.md).
+İmajda Claude Code, Codex CLI, Gemini CLI ve `gh` hazırdır; Hermes isteğe bağlıdır. Otomasyon için aynı ayarlar `docker/.env` ile de verilebilir. Ayrıntılar: [docs/tr/docker.md](docs/tr/docker.md).
 
 ### Elle kurulum (tek agent)
 
@@ -131,15 +131,15 @@ Etkileşimli kullanımda istemciye şunu demeniz yeterli: *"agents-room masasın
 
 | Konu | Belge |
 |---|---|
-| Teknoloji seçimi, bileşenler, veri modeli, görev yaşam döngüsü, güvenlik | [docs/mimari.md](docs/mimari.md) |
-| Uzak makineler: Tailscale / Cloudflare / Caddy, token ve kayıt akışı | [docs/dagitik-kurulum.md](docs/dagitik-kurulum.md) |
-| Agent'ları Docker ile başka makinelerde çalıştırma, GitHub anahtarı | [docs/docker.md](docs/docker.md) |
+| Teknoloji seçimi, bileşenler, veri modeli, görev yaşam döngüsü, güvenlik | [docs/tr/mimari.md](docs/tr/mimari.md) |
+| Uzak makineler: Tailscale / Cloudflare / Caddy, token ve kayıt akışı | [docs/tr/dagitik-kurulum.md](docs/tr/dagitik-kurulum.md) |
+| Agent'ları Docker ile başka makinelerde çalıştırma, GitHub anahtarı | [docs/tr/docker.md](docs/tr/docker.md) |
 | Ortak GitHub reposunda paralel çalışma kuralları | [skills/agents-room/references/git-rules.md](skills/agents-room/references/git-rules.md) |
 | Orkestratör akışı (başkan → taslak → istişare → dağıt → izle → incele → sentezle) | [skills/agents-room/references/orchestrator.md](skills/agents-room/references/orchestrator.md) |
-| Pilot senaryo ve sonuçları | [docs/pilot.md](docs/pilot.md) |
-| Araştırma: protokoller (XMPP, Matrix, NATS, A2A, MCP…) | [docs/research/01-protokol-degerlendirmesi.md](docs/research/01-protokol-degerlendirmesi.md) |
-| Araştırma: benzer açık kaynak çözümler ve referans mimari | [docs/research/02-benzer-cozumler-ve-referans-mimari.md](docs/research/02-benzer-cozumler-ve-referans-mimari.md) |
-| Araştırma: Claude Code / Codex / Hermes entegrasyon ayrıntıları | [docs/research/03-istemci-entegrasyonu.md](docs/research/03-istemci-entegrasyonu.md) |
+| Pilot senaryo ve sonuçları | [docs/tr/pilot.md](docs/tr/pilot.md) |
+| Araştırma: protokoller (XMPP, Matrix, NATS, A2A, MCP…) | [docs/tr/research/01-protokol-degerlendirmesi.md](docs/tr/research/01-protokol-degerlendirmesi.md) |
+| Araştırma: benzer açık kaynak çözümler ve referans mimari | [docs/tr/research/02-benzer-cozumler-ve-referans-mimari.md](docs/tr/research/02-benzer-cozumler-ve-referans-mimari.md) |
+| Araştırma: Claude Code / Codex / Hermes entegrasyon ayrıntıları | [docs/tr/research/03-istemci-entegrasyonu.md](docs/tr/research/03-istemci-entegrasyonu.md) |
 
 ## MCP araçları
 

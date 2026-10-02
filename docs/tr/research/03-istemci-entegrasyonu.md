@@ -1,5 +1,7 @@
 # 03 — İstemci Entegrasyonu (Claude Code, Codex CLI, Hermes Agent)
 
+[English](../../research/03-client-integration.md) · **Türkçe**
+
 > Tarih: 2026-09-30. Kapsam: `agents-room` MCP sunucusunu (Streamable HTTP, `http://HOST:7700/mcp`, `Authorization: Bearer <token>`) üç istemciye bağlama; ortak bir "skill" paketi dağıtma; headless çalıştırma; zaman aşımı (long-poll) ayarları.
 >
 > Kaynaklar: yerel inceleme (`claude` v2.1.278, `hermes` v0.21.2 — `~/.hermes/hermes-agent` içindeki dokümanlar ve kaynak kod), resmi web dokümanları (code.claude.com, learn.chatgpt.com / developers.openai.com, agentskills.io). Codex CLI bu makinede **kurulu değil**; Codex bilgileri yalnızca web dokümanlarına dayanıyor.

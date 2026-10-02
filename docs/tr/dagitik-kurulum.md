@@ -1,5 +1,7 @@
 # Dağıtık kurulum: farklı bilgisayarlardaki agent'ları aynı masaya bağlamak
 
+[English](../distributed-setup.md) · **Türkçe**
+
 ## En kısa yol: aynı yerel ağ
 
 1. Ana makinede `cd server && npm start`. Sunucu `0.0.0.0:7700` üzerinde dinler ve yerel ağ adresini ekrana yazar.

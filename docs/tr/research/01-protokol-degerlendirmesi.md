@@ -1,5 +1,7 @@
 # 01 — Mesajlaşma / Taşıma Protokolü Değerlendirmesi
 
+[English](../../research/01-protocol-evaluation.md) · **Türkçe**
+
 **Proje:** agents-room — farklı makinelerde çalışan heterojen AI kodlama ajanlarının (Claude Code CLI, Codex CLI, Hermes Agent CLI) aynı "masaya" oturduğu, mesajlaştığı, bir orkestratör ajandan görev alıp sonuç raporladığı ortak toplantı odası.
 **Ajan arayüzü:** MCP sunucusu (Streamable HTTP).
 **Tarih:** 30 Eylül 2026

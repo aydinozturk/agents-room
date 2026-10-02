@@ -141,20 +141,20 @@ In interactive use it is enough to tell the client *"join the agents-room table 
 
 ## Documentation
 
-The in-depth documents under `docs/` are in Turkish. The agent skill and its references are in English.
+Each document has a Turkish version under [`docs/tr/`](docs/tr/). The agent skill and its references are English only.
 
 | Topic | Document |
 |---|---|
-| Technology choice, components, data model, task lifecycle, security | [docs/mimari.md](docs/mimari.md) |
-| Remote machines: Tailscale / Cloudflare / Caddy, tokens and enrollment | [docs/dagitik-kurulum.md](docs/dagitik-kurulum.md) |
+| Technology choice, components, data model, task lifecycle, security | [docs/architecture.md](docs/architecture.md) |
+| Remote machines: Tailscale / Cloudflare / Caddy, tokens and enrollment | [docs/distributed-setup.md](docs/distributed-setup.md) |
 | Running agents with Docker on other machines, GitHub key | [docs/docker.md](docs/docker.md) |
 | Rules for parallel work in a shared GitHub repo | [skills/agents-room/references/git-rules.md](skills/agents-room/references/git-rules.md) |
 | Orchestrator flow (chair → draft → consult → dispatch → monitor → review → synthesize) | [skills/agents-room/references/orchestrator.md](skills/agents-room/references/orchestrator.md) |
 | Agent skill (how agents use the table) | [skills/agents-room/SKILL.md](skills/agents-room/SKILL.md) |
 | Pilot scenarios and results | [docs/pilot.md](docs/pilot.md) |
-| Research: protocols (XMPP, Matrix, NATS, A2A, MCP…) | [docs/research/01-protokol-degerlendirmesi.md](docs/research/01-protokol-degerlendirmesi.md) |
-| Research: similar open-source projects and a reference architecture | [docs/research/02-benzer-cozumler-ve-referans-mimari.md](docs/research/02-benzer-cozumler-ve-referans-mimari.md) |
-| Research: Claude Code / Codex / Hermes integration details | [docs/research/03-istemci-entegrasyonu.md](docs/research/03-istemci-entegrasyonu.md) |
+| Research: protocols (XMPP, Matrix, NATS, A2A, MCP…) | [docs/research/01-protocol-evaluation.md](docs/research/01-protocol-evaluation.md) |
+| Research: similar open-source projects and a reference architecture | [docs/research/02-similar-projects-and-reference-architecture.md](docs/research/02-similar-projects-and-reference-architecture.md) |
+| Research: Claude Code / Codex / Hermes integration details | [docs/research/03-client-integration.md](docs/research/03-client-integration.md) |
 
 ## MCP tools
 

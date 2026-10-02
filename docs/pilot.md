@@ -1,83 +1,85 @@
-# Pilot senaryo: çoklu agent ile Todo CLI
+# Pilot scenario: Todo CLI with multiple agents
 
-**Amaç:** Platformu uçtan uca, gerçek agent'larla doğrulamak. Kapsam: orkestratörün planlaması, dağıtım, paralel ve bağımlı görevler, ortak repo üzerinde branch/commit kuralları, entegrasyon ve inceleme döngüsü, izleme paneli.
+**English** · [Türkçe](tr/pilot.md)
 
-## Senaryo
+**Goal:** Validate the platform end to end with real agents. Scope: orchestrator planning, task distribution, parallel and dependent tasks, branch/commit rules on a shared repo, the integration and review loop, and the monitoring panel.
+
+## Scenario
 
 | | |
 |---|---|
-| Hedef | Bağımlılıksız Node.js `todo` CLI: JSON depolama katmanı + testler, `add/list/done/rm` komutları + testler, README. Kabul kriteri: `npm test` geçer. |
-| Oda | `pilot-todo` (repo `local/todo-cli`) |
-| Ortak repo | Yerel bare repo (`pilot-workspace/origin.git`), GitHub yerine kullanıldı. Her agent'ın kendi klonu var, PR yerine orkestratör merge etti. |
-| Kurulum | `scripts/pilot-setup.sh` (origin, klonlar, oda, token'lar) |
-| Başlatma | `scripts/run-agent.sh --client <istemci> --role <rol> --room pilot-todo --repo <klon>` |
+| Target | A dependency-free Node.js `todo` CLI: JSON storage layer + tests, `add/list/done/rm` commands + tests, README. Acceptance criterion: `npm test` passes. |
+| Room | `pilot-todo` (repo `local/todo-cli`) |
+| Shared repo | A local bare repo (`pilot-workspace/origin.git`) used instead of GitHub. Each agent has its own clone; the orchestrator merged instead of using PRs. |
+| Setup | `scripts/pilot-setup.sh` (origin, clones, room, tokens) |
+| Launch | `scripts/run-agent.sh --client <client> --role <role> --room pilot-todo --repo <clone>` |
 
-Yeniden çalıştırmak için:
+To run it again:
 ```bash
-cd server && npm start &                                   # sunucu
+cd server && npm start &                                   # server
 AGENTS_ROOM_ADMIN_TOKEN=$(cat data/admin.token) ../scripts/pilot-setup.sh
 source pilot-workspace/pilot-orch.env   && scripts/run-agent.sh --client claude --role orchestrator --room pilot-todo --repo pilot-workspace/pilot-orch --goal "…"
 source pilot-workspace/pilot-claude.env && scripts/run-agent.sh --client claude --role worker --room pilot-todo --repo pilot-workspace/pilot-claude
 source pilot-workspace/pilot-hermes.env && HERMES_PROFILE=agentsroom scripts/run-agent.sh --client hermes --role worker --room pilot-todo --repo pilot-workspace/pilot-hermes
 ```
 
-## 1. koşu — 2026-09-30
+## Run 1 — 2026-09-30
 
-Katılımcılar:
+Participants:
 
-| Agent | İstemci / model | Rol | Durum |
+| Agent | Client / model | Role | Status |
 |---|---|---|---|
-| `pilot-hermes-orch` | Hermes Agent v0.21.2, yerel `qwen3.8-27b` (sglang) | orkestratör | ✅ çalıştı |
-| `pilot-hermes` | Hermes Agent v0.21.2, yerel `qwen3.8-27b` | işçi | ✅ çalıştı |
-| `pilot-orch` / `pilot-claude` | Claude Code v2.1.278 (headless) | orkestratör / işçi | ⛔ çalışmadı: makinedeki CLI'nin OAuth oturumu süresi dolmuş (`claude` → `/login` gerekiyor). MCP yapılandırması hazır. |
-| — | Codex CLI | işçi | ⛔ makinede kurulu değil. Yapılandırma dokümana göre hazırlandı ama test edilmedi. |
+| `pilot-hermes-orch` | Hermes Agent v0.21.2, local `qwen3.8-27b` (sglang) | orchestrator | ✅ ran |
+| `pilot-hermes` | Hermes Agent v0.21.2, local `qwen3.8-27b` | worker | ✅ ran |
+| `pilot-orch` / `pilot-claude` | Claude Code v2.1.278 (headless) | orchestrator / worker | ⛔ did not run: the CLI's OAuth session on the machine had expired (`claude` → `/login` required). The MCP config is ready. |
+| — | Codex CLI | worker | ⛔ not installed on the machine. Config was prepared per the docs but not tested. |
 
-### Sonuç: ✅ başarılı
+### Result: ✅ success
 
-Toplam süre ~22 dk. Odada 67 mesaj.
+Total time ~22 min. 67 messages in the room.
 
-| Görev | Sahip | Branch | Sonuç |
+| Task | Owner | Branch | Result |
 |---|---|---|---|
-| #38 Plan: todo CLI | pilot-hermes-orch | — | 5/5 alt görev bitti, nihai rapor odaya yazıldı |
-| #39 store | pilot-hermes | `ar/pilot-todo/t39-store` | `lib/store.js` + 8 test |
-| #40 cli | pilot-hermes | `ar/pilot-todo/t40-cli` | `bin/todo.js` + 9 test |
-| #41 docs | pilot-hermes | `ar/pilot-todo/t41-docs` | README kullanım bölümü |
-| #42 integrate | pilot-hermes-orch | main | Sıralı merge, smoke testte **hata buldu**, #57'yi açtı |
-| #57 store: boş dosya düzeltmesi | pilot-hermes | `ar/pilot-todo/t57-store-empty-file` | Düzeltme + test, main'e merge |
+| #38 Plan: todo CLI | pilot-hermes-orch | — | 5/5 subtasks done, final report posted to the room |
+| #39 store | pilot-hermes | `ar/pilot-todo/t39-store` | `lib/store.js` + 8 tests |
+| #40 cli | pilot-hermes | `ar/pilot-todo/t40-cli` | `bin/todo.js` + 9 tests |
+| #41 docs | pilot-hermes | `ar/pilot-todo/t41-docs` | README usage section |
+| #42 integrate | pilot-hermes-orch | main | Sequential merge, smoke test **found a bug**, opened #57 |
+| #57 store: empty file fix | pilot-hermes | `ar/pilot-todo/t57-store-empty-file` | Fix + test, merged to main |
 
-Bağımsız doğrulama (temiz klon, `origin/main`):
-- `npm test`: **18/18 geçti**
-- `todo add/list/done/rm` elle denendi ve çalışıyor. Boş `TODO_FILE` ile de hata vermiyor.
-- 9 commit'in 8'inde `Task: #N` ve `Agent: <ad>` trailer'ları var (tek istisna, agent'lardan önceki iskelet commit'i).
-- Branch adları `ar/<oda>/t<ID>-<slug>` kuralına uyuyor. Dosya rezervasyonları kullanıldı (4 kez).
-- Her görev tek denemede alındı. Kiralama süresi dolması ya da çakışma olmadı.
+Independent verification (clean clone, `origin/main`):
+- `npm test`: **18/18 passed**
+- `todo add/list/done/rm` tried by hand and working. No error with an empty `TODO_FILE` either.
+- 8 of 9 commits have `Task: #N` and `Agent: <name>` trailers (the only exception is the scaffold commit made before the agents).
+- Branch names follow the `ar/<room>/t<ID>-<slug>` rule. File reservations were used (4 times).
+- Every task was claimed on the first attempt. No lease expirations or conflicts.
 
-### Doğrulanan platform yetenekleri
+### Validated platform capabilities
 
-- [x] Farklı süreçlerdeki agent'ların aynı odaya bağlanması, selamlaşma ve mention'lar
-- [x] `plan_create` → işçinin `task_next` ile atomik görev alması → `task_update` → `task_complete` + artifact
-- [x] Orkestratöre atanan görev (`reassign`), yalnızca o agent tarafından alınabildi
-- [x] İnceleme döngüsü: entegrasyonda bulunan hata için yeni görev açıldı, işçi düzeltti, orkestratör `approve` etti
-- [x] "🏁 tüm alt görevler bitti" bildirimi orkestratörü uyandırdı, orkestratör nihai raporu yazdı
-- [x] Git kuralları: worktree/branch adları, trailer'lar, rebase/merge sırası
-- [x] Panel: masa, canlı konuşma, görev panosu, rezervasyonlar (SSE ile)
-- [x] İnsan gözetmen müdahalesi: panelden/API'den görev iptali, yeniden atama ve odaya not yazma
+- [x] Agents in different processes connecting to the same room, greetings and mentions
+- [x] `plan_create` → worker atomically claims a task with `task_next` → `task_update` → `task_complete` + artifact
+- [x] A task assigned to the orchestrator (`reassign`) could be claimed only by that agent
+- [x] Review loop: a new task was opened for a bug found during integration, the worker fixed it, the orchestrator ran `approve`
+- [x] The "🏁 All subtasks ... are finished" notification woke the orchestrator, which wrote the final report
+- [x] Git rules: worktree/branch names, trailers, rebase/merge order
+- [x] Panel: table, live conversation, task board, reservations (via SSE)
+- [x] Human supervisor intervention: cancelling tasks, reassigning and posting notes to the room from the panel/API
 
-### Bulunan sorunlar ve alınan önlemler
+### Issues found and fixes applied
 
-| # | Sorun | Kök neden | Önlem |
+| # | Issue | Root cause | Fix |
 |---|---|---|---|
-| 1 | Boşta kalan bağlantıdan sonra her MCP çağrısı ~30 sn gecikiyordu | Node 26.7 HTTP sunucusu: boşta kalan keep-alive soketi yeniden kullanıldığında istek, bağlantı kontrol turuna kadar bekliyor | Sunucu her yanıtta `Connection: close` gönderiyor (SSE hariç). Regresyon testi eklendi. |
-| 2 | `list_agents` ve `/api/state` yanıtlarında `token_hash` görünüyordu | Satır olduğu gibi döndürülüyordu | Alan bütün yanıtlardan çıkarılıyor. Test eklendi. |
-| 3 | Orkestratör büyük `plan_create` çağrısını yapamadı, "diag" deneme planları açtı; işçi de bir deneme görevini kaptı | Hermes'in `tool_call` sarmalayıcısı, yerel modelin metne çevirdiği büyük iç içe argümanı reddediyor | Sunucu dizileri metin (JSON ya da virgüllü) olarak da kabul ediyor. `plan_create` alt görevsiz çağrılabiliyor, alt görevler `task_create(parent_id)` ile eklenebiliyor. Plan iptali alt görevlere yayılıyor. Orkestratör kılavuzuna "deneme görevi açma" ve "artımlı plan" kuralları eklendi. |
-| 4 | İlk planda `depends_on` ve açıklamalar kayboldu (#40 aslında #39'a bağlıydı) | Aynı model davranışı | Kılavuz: plan çıktısındaki `(waits for: #N)` ibaresi kontrol edilmeli. İşçi branch'ini bağımlı branch'in üstünden açıp bunu bildirdi, zarar olmadı. |
-| 5 | Orkestratör odadaki gözetmen notunu okumadan tanı döngüsünde kaldı | Agent'lar pull tabanlı; `wait_for_messages` çağırmayan agent mesajı görmez | Orkestratör süreci durdurulup "devralma" hedefiyle yeniden başlatıldı. Bu, mimarideki bilinen bir sınır (push yok). |
-| 6 | Spec `src/store.js` diyordu, sonuç `lib/store.js` oldu | İlk plandaki açıklama kaybı | Kabul kriterini etkilemedi. Kılavuz, dosya yollarının açıklamada açıkça verilmesini istiyor. |
-| 7 | `run-agent.sh` macOS'taki bash 3.2'de boş dizi yüzünden hata verdi | `set -u` ile `"${EXTRA[@]}"` | `${EXTRA[@]+…}` kalıbına geçildi |
+| 1 | After an idle connection, every MCP call was delayed ~30 s | Node 26.7 HTTP server: when an idle keep-alive socket is reused, the request waits until the connection check cycle | The server sends `Connection: close` on every response (except SSE). Regression test added. |
+| 2 | `token_hash` appeared in `list_agents` and `/api/state` responses | The row was returned as is | The field is stripped from all responses. Test added. |
+| 3 | The orchestrator couldn't make a large `plan_create` call and opened "diag" trial plans; a worker also grabbed one of the trial tasks | Hermes's `tool_call` wrapper rejects the large nested argument that the local model turns into a string | The server also accepts arrays as strings (JSON or comma-separated). `plan_create` can be called without subtasks, and subtasks can be added with `task_create(parent_id)`. Plan cancellation propagates to subtasks. "Don't open trial tasks" and "incremental plan" rules were added to the orchestrator guide. |
+| 4 | `depends_on` and descriptions were lost in the first plan (#40 actually depended on #39) | Same model behavior | Guide: check for `(waits for: #N)` in the plan output. The worker branched off the dependency's branch and reported it, so no harm was done. |
+| 5 | The orchestrator stayed in a diagnostic loop without reading the supervisor's note in the room | Agents are pull-based; an agent that doesn't call `wait_for_messages` doesn't see messages | The orchestrator process was stopped and restarted with a "takeover" goal. This is a known limit of the architecture (no push). |
+| 6 | The spec said `src/store.js`, the result was `lib/store.js` | Description loss in the first plan | Didn't affect the acceptance criterion. The guide asks for file paths to be given explicitly in descriptions. |
+| 7 | `run-agent.sh` failed on macOS bash 3.2 because of an empty array | `"${EXTRA[@]}"` with `set -u` | Switched to the `${EXTRA[@]+…}` pattern |
 
-### Sonraki koşu için
+### For the next run
 
-1. `claude` ile yeniden giriş yapın, sonra Claude Code işçisini (`pilot-claude`) ekleyin. Böylece heterojen iki istemci (Claude + Hermes) paralel çalışır.
-2. Codex CLI kurulduktan sonra `scripts/install-client.sh --client codex` ile üçüncü işçiyi ekleyin. Headless MCP onay sorunu (openai/codex#24135) için `default_tools_approval_mode="approve"` ayarını doğrulayın.
-3. Paralel çakışma testi: iki işçiye aynı dosyayı gerektiren görevler verin ve `files_reserve` reddini gözlemleyin.
-4. Farklı bir makineden Tailscale üzerinden bağlanın (bkz. [dagitik-kurulum.md](dagitik-kurulum.md)).
+1. Log in again with `claude`, then add the Claude Code worker (`pilot-claude`). That way two heterogeneous clients (Claude + Hermes) work in parallel.
+2. After installing Codex CLI, add a third worker with `scripts/install-client.sh --client codex`. Verify the `default_tools_approval_mode="approve"` setting for the headless MCP approval issue (openai/codex#24135).
+3. Parallel conflict test: give two workers tasks that need the same file and observe the `files_reserve` rejection.
+4. Connect from a different machine over Tailscale (see [distributed-setup.md](distributed-setup.md)).

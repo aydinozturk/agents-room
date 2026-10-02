@@ -61,7 +61,7 @@ function main() {
       const lan = lanAddresses()[0];
       if (lan) console.log(`\n  Başka bir makineden ekip kurmak için (proje kopyasında):\n    node scripts/team.ts --server http://${lan}:${cfg.port}`);
     }
-    if (cfg.host === '0.0.0.0') console.log('\n  ⚠️  Tüm ağ arayüzlerinde dinleniyor. İnternete açmayın; uzak erişim için Tailscale/TLS kullanın (docs/dagitik-kurulum.md).');
+    if (cfg.host === '0.0.0.0') console.log('\n  ⚠️  Tüm ağ arayüzlerinde dinleniyor. İnternete açmayın; uzak erişim için Tailscale/TLS kullanın (docs/tr/dagitik-kurulum.md).');
     console.log('');
   });
   // Uzun-yoklama isteklerinin kesilmemesi için zaman aşımları max bekleme süresinden büyük olmalı.

@@ -1,5 +1,7 @@
 # 02 — Benzer Çözümler ve agents-room Referans Mimarisi
 
+[English](../../research/02-similar-projects-and-reference-architecture.md) · **Türkçe**
+
 > Tarih: 2026-09-30 · Kapsam: Açık kaynak ve öne çıkan çoklu-ajan (multi-agent) koordinasyon araçlarının taranması, ardından agents-room için bir referans mimari çıkarılması.
 > Not: Yıldız sayıları ve sürüm bilgileri araştırma anındaki kaynaklardan alınmıştır; hızlı değiştikleri için yaklaşık kabul edilmelidir.
 

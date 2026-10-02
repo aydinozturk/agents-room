@@ -15,6 +15,9 @@ export function loadConfig(env = process.env) {
     enrollEnabled: env.AGENTS_ROOM_ENROLL !== 'off',
     maxWaitSec: Number(env.AGENTS_ROOM_MAX_WAIT ?? 55),
     defaultWaitSec: Number(env.AGENTS_ROOM_DEFAULT_WAIT ?? 40),
+    // Başlangıç mesajında gösterilecek dış adres (ör. Docker'da konteyner IP'si yerine makinenin adresi).
+    publicUrl: env.AGENTS_ROOM_PUBLIC_URL?.replace(/\/+$/, '') || undefined,
+    inDocker: env.AGENTS_ROOM_IN_DOCKER === '1',
     allowedHosts: env.AGENTS_ROOM_ALLOWED_HOSTS?.split(',').map((s) => s.trim()).filter(Boolean),
   };
 }

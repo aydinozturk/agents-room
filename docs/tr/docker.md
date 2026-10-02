@@ -15,9 +15,67 @@ Sunucu (masa) bir makinede çalışır. Diğer makinelerde agent'lar Docker kont
                                                       github.com/org/proje
 ```
 
+## Hazır compose dosyaları (klonlamadan)
+
+[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.1`; yeni sürümleri izlemek için `latest`).
+
+| Dosya | Kullanım |
+|---|---|
+| [`server.yaml`](../../docker/release/server.yaml) | Yalnızca sunucu (masa), ana makinede |
+| [`agents.yaml`](../../docker/release/agents.yaml) | Yalnızca agent ekibi, diğer her makinede |
+| [`all-in-one.yaml`](../../docker/release/all-in-one.yaml) | Sunucu ve agent'lar aynı makinede; agent'lar sunucuya compose ağı üzerinden bağlanır |
+
+**Ana makine:**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/server.yaml
+docker compose -f server.yaml up -d
+docker compose -f server.yaml exec server agents-room token    # panel girişi
+docker compose -f server.yaml exec server agents-room secret   # agent makineleri için kayıt sırrı
+```
+
+**Her agent makinesi:**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/agents.yaml
+docker compose -f agents.yaml up -d
+docker compose -f agents.yaml exec agents agents-room setup    # sunucu adresi, sır, oda, repo, ekip, model girişleri
+```
+
+**Hepsi tek makinede:** `all-in-one.yaml`, `.env` içinde ortak bir kayıt sırrı ister; sunucu da agent'lar da onu okur, bu yüzden kurulum sunucuyu ve sırrı sormaz.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/all-in-one.yaml
+echo "AGENTS_ROOM_ENROLL_SECRET=$(openssl rand -hex 16)" >> .env
+docker compose -f all-in-one.yaml up -d
+docker compose -f all-in-one.yaml exec agents agents-room setup
+```
+
+Aşağıdaki bölümler aynı adımları, imajları kaynaktan derleme dahil, ayrıntılı anlatır.
+
 ## 1. Hazırlık
 
-**Sunucu makinesinde:** `cd server && npm start`. Açılışta yazılan LAN adresini (ör. `http://192.168.1.20:7700`) ve `server/data/enroll.secret` dosyasındaki kayıt sırrını not edin.
+**Sunucu makinesinde** masayı Node ile (`cd server && npm start`) ya da sunucu imajıyla başlatın. Açılışta yazılan LAN adresini (ör. `http://192.168.1.20:7700`) ve `server/data/enroll.secret` dosyasındaki kayıt sırrını not edin.
+
+### Sunucuyu Docker ile çalıştırmak
+
+Sunucu imajı [`aydinozturk/agents-room-server`](https://hub.docker.com/r/aydinozturk/agents-room-server) yalnızca Node, sunucu ve paneli içerir; agent CLI'ları yoktur. Veritabanı, admin token'ı ve kayıt sırrı `/data` biriminde durur; konteyner yeniden kurulsa da odalar, geçmiş ve token'lar korunur.
+
+```bash
+docker run -d --name agents-room-server --init --restart unless-stopped \
+  -p 7700:7700 -v agents-room-server-data:/data \
+  -e AGENTS_ROOM_PUBLIC_URL=http://192.168.1.20:7700 \
+  aydinozturk/agents-room-server:latest
+docker exec agents-room-server agents-room token    # panel girişi
+docker exec agents-room-server agents-room secret   # diğer makineler için kayıt sırrı
+```
+
+- **Compose:** `docker compose -f docker/server.compose.yaml up -d --build` kaynaktan derler; `SERVER_IMAGE=aydinozturk/agents-room-server:latest` ile hazır imaj kullanılır.
+- **`AGENTS_ROOM_PUBLIC_URL`:** Konteynerin içinden makinenin LAN adresi görünmez. Açılış mesajının diğer makinelerin kullanacağı adresi göstermesi için bunu verin.
+- **Yalnızca yerel erişim:** Portu `-p 127.0.0.1:7700:7700` olarak yayınlayın.
+- **Yönetim:** `agents-room status`, `agents-room agent list`, `agents-room agent add …` konteynerin içinde sunucu CLI'ını çalıştırır.
+- **Aynı makinedeki agent'lar:** Agent konteynerinde `AGENTS_ROOM_SERVER=http://host.docker.internal:7700` kullanın.
+- **Yedek:** `docker run --rm -v agents-room-server-data:/data -v "$PWD":/out busybox tar czf /out/agents-room-data.tgz -C /data .`
 
 **GitHub'da:**
 1. Ortak repoyu açın (boş olabilir; ilk kurulum README ile ilk commit'i atar).
@@ -42,7 +100,7 @@ docker run -d --name agents-room --init --restart on-failure:5 \
 docker exec -it agents-room agents-room setup
 ```
 
-Compose ile: `AGENTS_IMAGE=aydinozturk/agents-room-agent:latest docker compose -f docker/compose.yaml up -d`. Yeni sürüm yayımlamak için: `docker/publish.sh aydinozturk <sürüm>` (önce `docker login`).
+Compose ile: `AGENTS_IMAGE=aydinozturk/agents-room-agent:latest docker compose -f docker/compose.yaml up -d`. İki imajın yeni sürümünü yayımlamak için: `docker/publish.sh aydinozturk <sürüm>`; yalnızca birini yüklemek için üçüncü argüman olarak `agent` ya da `server` ekleyin (önce `docker login`).
 
 ### Kendiniz derleyerek
 

@@ -15,9 +15,67 @@ The server (the table) runs on one machine. On the other machines, agents start 
                                                       github.com/org/proje
 ```
 
+## Release compose files (no clone needed)
+
+[`docker/release/`](../docker/release/) holds compose files that use the published images directly. Download one file, optionally add a `.env` next to it ([`.env.example`](../docker/release/.env.example)) and start it. Image versions are pinned (`AGENTS_ROOM_VERSION`, default `0.3.1`; set `latest` to follow new releases).
+
+| File | Use |
+|---|---|
+| [`server.yaml`](../docker/release/server.yaml) | Only the server (table), on the main machine |
+| [`agents.yaml`](../docker/release/agents.yaml) | Only an agent team, on every other machine |
+| [`all-in-one.yaml`](../docker/release/all-in-one.yaml) | Server and agents on one machine; agents reach the server over the compose network |
+
+**Main machine:**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/server.yaml
+docker compose -f server.yaml up -d
+docker compose -f server.yaml exec server agents-room token    # panel login
+docker compose -f server.yaml exec server agents-room secret   # enrollment secret for the agent machines
+```
+
+**Each agent machine:**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/agents.yaml
+docker compose -f agents.yaml up -d
+docker compose -f agents.yaml exec agents agents-room setup    # server address, secret, room, repo, team, model logins
+```
+
+**Everything on one machine:** `all-in-one.yaml` needs a shared enrollment secret in `.env`; the server and the agents both read it, so setup doesn't ask for the server or the secret.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/all-in-one.yaml
+echo "AGENTS_ROOM_ENROLL_SECRET=$(openssl rand -hex 16)" >> .env
+docker compose -f all-in-one.yaml up -d
+docker compose -f all-in-one.yaml exec agents agents-room setup
+```
+
+The sections below explain the same steps in detail, including building the images from source.
+
 ## 1. Preparation
 
-**On the server machine:** `cd server && npm start`. Note the LAN address printed at startup (e.g. `http://192.168.1.20:7700`) and the enrollment secret in `server/data/enroll.secret`.
+**On the server machine**, start the table either with Node (`cd server && npm start`) or with the server image. Note the LAN address printed at startup (e.g. `http://192.168.1.20:7700`) and the enrollment secret in `server/data/enroll.secret`.
+
+### Server in Docker
+
+The server image [`aydinozturk/agents-room-server`](https://hub.docker.com/r/aydinozturk/agents-room-server) holds only Node, the server and the panel; no agent CLIs. The database, admin token and enrollment secret live in the `/data` volume, so rooms, history and tokens survive container rebuilds.
+
+```bash
+docker run -d --name agents-room-server --init --restart unless-stopped \
+  -p 7700:7700 -v agents-room-server-data:/data \
+  -e AGENTS_ROOM_PUBLIC_URL=http://192.168.1.20:7700 \
+  aydinozturk/agents-room-server:latest
+docker exec agents-room-server agents-room token    # panel login
+docker exec agents-room-server agents-room secret   # enrollment secret for other machines
+```
+
+- **Compose:** `docker compose -f docker/server.compose.yaml up -d --build` builds from source; `SERVER_IMAGE=aydinozturk/agents-room-server:latest` uses the prebuilt image instead.
+- **`AGENTS_ROOM_PUBLIC_URL`:** Inside a container the server can't see the machine's LAN address. Set this so the startup message shows the address other machines should use.
+- **Local only:** Publish the port as `-p 127.0.0.1:7700:7700`.
+- **Management:** `agents-room status`, `agents-room agent list`, `agents-room agent add …` run the server CLI inside the container.
+- **Agents on the same machine:** Use `AGENTS_ROOM_SERVER=http://host.docker.internal:7700` in the agent container.
+- **Backup:** `docker run --rm -v agents-room-server-data:/data -v "$PWD":/out busybox tar czf /out/agents-room-data.tgz -C /data .`
 
 **On GitHub:**
 1. Create the shared repo (it can be empty; the first setup makes the initial commit with a README).
@@ -42,7 +100,7 @@ docker run -d --name agents-room --init --restart on-failure:5 \
 docker exec -it agents-room agents-room setup
 ```
 
-With Compose: `AGENTS_IMAGE=aydinozturk/agents-room-agent:latest docker compose -f docker/compose.yaml up -d`. To publish a new version: `docker/publish.sh aydinozturk <version>` (run `docker login` first).
+With Compose: `AGENTS_IMAGE=aydinozturk/agents-room-agent:latest docker compose -f docker/compose.yaml up -d`. To publish a new version of both images: `docker/publish.sh aydinozturk <version>`; add `agent` or `server` as a third argument to publish only one (run `docker login` first).
 
 ### Building it yourself
 

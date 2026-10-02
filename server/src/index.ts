@@ -52,15 +52,20 @@ function main() {
   }, 15_000);
   const server = app.listen(cfg.port, cfg.host, () => {
     const hosts = cfg.host === '0.0.0.0' ? ['127.0.0.1', ...lanAddresses()] : [cfg.host];
+    const urls = cfg.publicUrl ? [cfg.publicUrl] : cfg.inDocker ? [] : hosts.map((h) => `http://${h}:${cfg.port}`);
     console.log(`\nagents-room çalışıyor`);
-    for (const h of hosts) console.log(`  panel: http://${h}:${cfg.port}    MCP: http://${h}:${cfg.port}/mcp`);
+    for (const u of urls) console.log(`  panel: ${u}    MCP: ${u}/mcp`);
+    if (!urls.length) console.log(`  panel: http://<bu-makinenin-adresi>:<yayınlanan-port>  (AGENTS_ROOM_PUBLIC_URL ile gösterilir)`);
     console.log(`  veritabanı:   ${cfg.dbPath}`);
-    console.log(`  panel girişi: ${join(dataDir, 'admin.token')}`);
-    if (secret) {
-      console.log(`  kayıt sırrı:  ${join(dataDir, 'enroll.secret')}`);
-      const lan = lanAddresses()[0];
-      if (lan) console.log(`\n  Başka bir makineden ekip kurmak için (proje kopyasında):\n    node scripts/team.ts --server http://${lan}:${cfg.port}`);
+    if (cfg.inDocker) {
+      console.log('  panel girişi: docker exec <konteyner> agents-room token');
+      if (secret) console.log('  kayıt sırrı:  docker exec <konteyner> agents-room secret');
+    } else {
+      console.log(`  panel girişi: ${join(dataDir, 'admin.token')}`);
+      if (secret) console.log(`  kayıt sırrı:  ${join(dataDir, 'enroll.secret')}`);
     }
+    const remote = cfg.publicUrl ?? (cfg.inDocker ? undefined : lanAddresses()[0] && `http://${lanAddresses()[0]}:${cfg.port}`);
+    if (secret && remote) console.log(`\n  Başka bir makineden ekip kurmak için (proje kopyasında):\n    node scripts/team.ts --server ${remote}`);
     if (cfg.host === '0.0.0.0') console.log('\n  ⚠️  Tüm ağ arayüzlerinde dinleniyor. İnternete açmayın; uzak erişim için Tailscale/TLS kullanın (docs/tr/dagitik-kurulum.md).');
     console.log('');
   });

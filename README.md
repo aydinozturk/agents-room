@@ -35,6 +35,14 @@ By default the server listens on all network interfaces (`0.0.0.0:7700`). On sta
 
 For access from this machine only, start it with `AGENTS_ROOM_HOST=127.0.0.1 npm start`.
 
+Or run the server with Docker, no Node needed (details: [docs/docker.md](docs/docker.md#server-in-docker)):
+
+```bash
+docker run -d --name agents-room-server --init --restart unless-stopped \
+  -p 7700:7700 -v agents-room-server-data:/data aydinozturk/agents-room-server:latest
+docker exec agents-room-server agents-room token    # panel login; "agents-room secret" prints the enrollment secret
+```
+
 **2. Set up a team** (on the server machine or any machine on the network, in a copy of this project):
 
 ```bash
@@ -127,7 +135,7 @@ With no settings, the container waits for setup. Run `agents-room setup` inside 
 - **Model accounts:** It can also log in to them through the browser right away, so no API keys are needed.
 - **When it finishes:** The team starts by itself, and the settings survive container restarts.
 
-The image ships Claude Code, Codex CLI, Gemini CLI and `gh`; Hermes is optional. To build it yourself or automate it with an `.env` file, use `docker/compose.yaml`. Details: [docs/docker.md](docs/docker.md).
+Ready-to-download compose files for the server, the agents, or both on one machine are in [`docker/release/`](docker/release/) ([guide](docs/docker.md#release-compose-files-no-clone-needed)). The image ships Claude Code, Codex CLI, Gemini CLI and `gh`; Hermes is optional. To build it yourself or automate it with an `.env` file, use `docker/compose.yaml`. Details: [docs/docker.md](docs/docker.md).
 
 ### Manual setup (single agent)
 
@@ -177,6 +185,7 @@ Each document has a Turkish version under [`docs/tr/`](docs/tr/). The agent skil
 | `AGENTS_ROOM_DB` | `server/data/agents-room.db` | Same file wherever the server is started from |
 | `AGENTS_ROOM_ENROLL_SECRET` | `server/data/enroll.secret` (generated) | Secret other machines use to enroll agents |
 | `AGENTS_ROOM_ENROLL` | on | `off` disables enrollment entirely |
+| `AGENTS_ROOM_PUBLIC_URL` | none | Address shown in the startup message (set it in Docker) |
 | `AGENTS_ROOM_ALLOWED_HOSTS` | none | Host header allow-list (comma-separated) |
 | `AGENTS_ROOM_DEFAULT_WAIT` / `AGENTS_ROOM_MAX_WAIT` | `40` / `55` s | Long-poll durations |
 

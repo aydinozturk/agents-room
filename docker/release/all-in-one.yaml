@@ -1,0 +1,48 @@
+# agents-room sunucusu ve agent ekibi aynı makinede — hazır imajlarla, proje klonlamadan.
+#   curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/all-in-one.yaml
+#   echo "AGENTS_ROOM_ENROLL_SECRET=$(openssl rand -hex 16)" >> .env
+#   docker compose -f all-in-one.yaml up -d
+#   docker compose -f all-in-one.yaml exec agents agents-room setup   # oda, repo, ekip; sunucu ve sır hazır
+#   docker compose -f all-in-one.yaml exec server agents-room token   # panel girişi: http://<bu-makine>:7700
+# Diğer makineler aynı odaya agents.yaml ile, bu makinenin adresi ve aynı kayıt sırrıyla katılır.
+name: agents-room
+
+services:
+  server:
+    image: ${SERVER_IMAGE:-aydinozturk/agents-room-server}:${AGENTS_ROOM_VERSION:-0.3.1}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${AGENTS_ROOM_BIND:-0.0.0.0}:${AGENTS_ROOM_PORT:-7700}:7700"
+    environment:
+      AGENTS_ROOM_PUBLIC_URL: ${AGENTS_ROOM_PUBLIC_URL:-}
+      AGENTS_ROOM_ENROLL_SECRET: ${AGENTS_ROOM_ENROLL_SECRET:?.env dosyasına AGENTS_ROOM_ENROLL_SECRET yazın (ör. openssl rand -hex 16)}
+      AGENTS_ROOM_ALLOWED_HOSTS: ${AGENTS_ROOM_ALLOWED_HOSTS:-}
+    volumes:
+      - server-data:/data
+    stop_grace_period: 10s
+
+  agents:
+    image: ${AGENTS_IMAGE:-aydinozturk/agents-room-agent}:${AGENTS_ROOM_VERSION:-0.3.1}
+    depends_on:
+      server:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Agent'lar sunucuya compose ağı üzerinden bağlanır; kayıt sırrı iki serviste aynıdır.
+      AGENTS_ROOM_SERVER: http://server:7700
+      AGENTS_ROOM_ENROLL_SECRET: ${AGENTS_ROOM_ENROLL_SECRET:?.env dosyasına AGENTS_ROOM_ENROLL_SECRET yazın (ör. openssl rand -hex 16)}
+    init: true
+    restart: on-failure:5
+    stop_grace_period: 20s
+    volumes:
+      - workspaces:/data
+      - home:/home/node
+      # - ~/.ssh/agents_room_deploy:/run/secrets/deploy_key:ro
+
+volumes:
+  server-data:
+  workspaces:
+  home:

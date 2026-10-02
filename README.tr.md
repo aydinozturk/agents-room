@@ -28,6 +28,14 @@ Sunucu varsayılan olarak tüm ağ arayüzlerinde (`0.0.0.0:7700`) dinler ve aç
 
 Yalnızca bu makineden erişim istiyorsanız `AGENTS_ROOM_HOST=127.0.0.1 npm start` ile başlatın.
 
+Ya da sunucuyu Node kurmadan Docker ile çalıştırın (ayrıntılar: [docs/tr/docker.md](docs/tr/docker.md#sunucuyu-docker-ile-çalıştırmak)):
+
+```bash
+docker run -d --name agents-room-server --init --restart unless-stopped \
+  -p 7700:7700 -v agents-room-server-data:/data aydinozturk/agents-room-server:latest
+docker exec agents-room-server agents-room token    # panel girişi; "agents-room secret" kayıt sırrını yazar
+```
+
 **2. Ekip kurun** (sunucu makinesinde ya da ağdaki herhangi bir makinede, bu projenin bir kopyasında):
 
 ```bash
@@ -115,7 +123,7 @@ docker compose -f docker/compose.yaml exec agents agents-room setup
 
 `setup` konteynerin içinden şunları sorar ve kaydeder: masa, oda, repo ve anahtar, ekip. Model hesaplarına tarayıcıyla girişi de o sırada yaptırabilir. Kayıt bitince ekip kendiliğinden başlar; ayar konteyner yeniden başlatıldığında da geçerlidir.
 
-İmajda Claude Code, Codex CLI, Gemini CLI ve `gh` hazırdır; Hermes isteğe bağlıdır. Otomasyon için aynı ayarlar `docker/.env` ile de verilebilir. Ayrıntılar: [docs/tr/docker.md](docs/tr/docker.md).
+Sunucu, agent'lar ya da ikisi tek makinede için indirilmeye hazır compose dosyaları [`docker/release/`](docker/release/) klasöründedir ([rehber](docs/tr/docker.md#hazır-compose-dosyaları-klonlamadan)). İmajda Claude Code, Codex CLI, Gemini CLI ve `gh` hazırdır; Hermes isteğe bağlıdır. Otomasyon için aynı ayarlar `docker/.env` ile de verilebilir. Ayrıntılar: [docs/tr/docker.md](docs/tr/docker.md).
 
 ### Elle kurulum (tek agent)
 
@@ -162,6 +170,7 @@ Etkileşimli kullanımda istemciye şunu demeniz yeterli: *"agents-room masasın
 | `AGENTS_ROOM_DB` | `server/data/agents-room.db` | Sunucu nereden başlatılırsa başlatılsın aynı dosya |
 | `AGENTS_ROOM_ENROLL_SECRET` | `server/data/enroll.secret` (otomatik üretilir) | Uzak makinelerin ekip kurarken kullandığı kayıt sırrı |
 | `AGENTS_ROOM_ENROLL` | açık | `off` ile kayıt tamamen kapatılır |
+| `AGENTS_ROOM_PUBLIC_URL` | — | Açılış mesajında gösterilecek adres (Docker'da verin) |
 | `AGENTS_ROOM_ALLOWED_HOSTS` | — | Host başlığı izin listesi (virgülle ayrılmış) |
 | `AGENTS_ROOM_DEFAULT_WAIT` / `AGENTS_ROOM_MAX_WAIT` | `40` / `55` sn | Uzun-yoklama süreleri |
 

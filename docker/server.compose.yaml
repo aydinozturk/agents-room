@@ -1,0 +1,32 @@
+# agents-room sunucusunu (masayı) Docker ile başlatır.
+#   docker compose -f docker/server.compose.yaml up -d --build
+#   docker compose -f docker/server.compose.yaml exec server agents-room token    # panel girişi
+#   docker compose -f docker/server.compose.yaml exec server agents-room secret   # kayıt sırrı
+# Hazır imaj: SERVER_IMAGE=aydinozturk/agents-room-server:latest docker compose -f docker/server.compose.yaml up -d
+# Aynı makinedeki agent konteynerleri: AGENTS_ROOM_SERVER=http://host.docker.internal:7700
+name: agents-room-server
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/server.Dockerfile
+    image: ${SERVER_IMAGE:-agents-room-server:latest}
+    init: true
+    restart: unless-stopped
+    ports:
+      # Yalnız bu makineden erişim için: "127.0.0.1:7700:7700"
+      - "${AGENTS_ROOM_PORT:-7700}:7700"
+    environment:
+      # Başlangıç mesajında ve ipuçlarında gösterilecek adres, ör. http://192.168.1.20:7700
+      AGENTS_ROOM_PUBLIC_URL: ${AGENTS_ROOM_PUBLIC_URL:-}
+      # Boşsa ilk açılışta üretilir ve birimde saklanır
+      AGENTS_ROOM_ENROLL_SECRET: ${AGENTS_ROOM_ENROLL_SECRET:-}
+      AGENTS_ROOM_ENROLL: ${AGENTS_ROOM_ENROLL:-on}
+      AGENTS_ROOM_ALLOWED_HOSTS: ${AGENTS_ROOM_ALLOWED_HOSTS:-}
+    volumes:
+      - data:/data
+    stop_grace_period: 10s
+
+volumes:
+  data:

@@ -1,0 +1,27 @@
+# agents-room sunucusu (masa) — hazır imajla, proje klonlamadan.
+#   curl -fsSLO https://raw.githubusercontent.com/aydinozturk/agents-room/main/docker/release/server.yaml
+#   docker compose -f server.yaml up -d
+#   docker compose -f server.yaml exec server agents-room token    # panel girişi
+#   docker compose -f server.yaml exec server agents-room secret   # diğer makineler için kayıt sırrı
+# Ayarlar isteğe bağlı olarak aynı klasördeki .env dosyasından okunur (.env.example).
+name: agents-room-server
+
+services:
+  server:
+    image: ${SERVER_IMAGE:-aydinozturk/agents-room-server}:${AGENTS_ROOM_VERSION:-0.3.1}
+    init: true
+    restart: unless-stopped
+    ports:
+      # Yalnız bu makineden erişim için: AGENTS_ROOM_BIND=127.0.0.1
+      - "${AGENTS_ROOM_BIND:-0.0.0.0}:${AGENTS_ROOM_PORT:-7700}:7700"
+    environment:
+      AGENTS_ROOM_PUBLIC_URL: ${AGENTS_ROOM_PUBLIC_URL:-}
+      AGENTS_ROOM_ENROLL_SECRET: ${AGENTS_ROOM_ENROLL_SECRET:-}
+      AGENTS_ROOM_ENROLL: ${AGENTS_ROOM_ENROLL:-on}
+      AGENTS_ROOM_ALLOWED_HOSTS: ${AGENTS_ROOM_ALLOWED_HOSTS:-}
+    volumes:
+      - data:/data               # veritabanı, admin token'ı, kayıt sırrı
+    stop_grace_period: 10s
+
+volumes:
+  data:

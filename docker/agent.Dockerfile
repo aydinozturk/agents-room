@@ -12,7 +12,7 @@ ARG INSTALL_GEMINI=1
 ARG INSTALL_HERMES=0
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client procps python3 ripgrep \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl git jq openssh-client procps python3 python3-pip python3-venv ripgrep sudo \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update && apt-get install -y --no-install-recommends gh \
@@ -25,6 +25,8 @@ RUN set -eu; pkgs=""; \
     if [ -n "$pkgs" ]; then npm install -g $pkgs && npm cache clean --force; fi
 
 # Kalıcı birimler imajdaki dizinin sahipliğini devralır: /data agent kullanıcısına ait olmalı.
+# Agent'lar konteynerin içinde tam yetkilidir: gerektiğinde sudo ile sistem paketi kurabilir (parolasız).
+RUN echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node && chmod 440 /etc/sudoers.d/node
 RUN mkdir -p /data/workspaces && chown -R node:node /data \
  && ln -s /opt/agents-room/docker/entrypoint.sh /usr/local/bin/agents-room
 

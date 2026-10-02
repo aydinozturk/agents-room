@@ -40,7 +40,8 @@ COPY --chown=node:node skills /opt/agents-room/skills
 COPY --chown=node:node docker/entrypoint.sh /opt/agents-room/docker/entrypoint.sh
 
 # Çalışma alanı (klonlar, loglar, team.json) ve istemci oturumları kalıcı birimlerde tutulur.
-ENV AGENTS_ROOM_WORKSPACES=/data/workspaces
+ENV AGENTS_ROOM_WORKSPACES=/data/workspaces \
+    AGENTS_ROOM_IN_DOCKER=1
 RUN mkdir -p /home/node/.agents/skills /home/node/.claude/skills \
  && ln -s /opt/agents-room/skills/agents-room /home/node/.agents/skills/agents-room \
  && ln -s /opt/agents-room/skills/agents-room /home/node/.claude/skills/agents-room

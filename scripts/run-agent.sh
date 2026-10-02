@@ -93,9 +93,24 @@ EOF
       rm -rf "$CFG_DIR"
       ;;
     codex)
+      # Codex komutları Linux'ta bwrap ile kendi sandbox'ında çalıştırır; Docker'ın varsayılan güvenlik profili buna
+      # izin vermez (bwrap: No permissions to create a new namespace) ve agent hiçbir komut çalıştıramaz.
+      # Konteynerde sandbox konteynerin kendisidir: root olmayan kullanıcı, yalnızca kendi birimleri. Elle: AGENTS_ROOM_CODEX_SANDBOX.
+      CODEX_SANDBOX="${AGENTS_ROOM_CODEX_SANDBOX:-}"
+      if [[ -z "$CODEX_SANDBOX" ]]; then
+        CODEX_SANDBOX=workspace-write
+        if [[ "$(uname -s)" == Linux ]] && ! codex sandbox linux -- true >/dev/null 2>&1; then
+          if [[ "${AGENTS_ROOM_IN_DOCKER:-0}" == 1 || -f /.dockerenv || -f /run/.containerenv ]]; then
+            CODEX_SANDBOX=danger-full-access
+            [[ $i == 1 ]] && echo "codex: konteynerde Codex sandbox'ı (bwrap) kullanılamıyor; komutlar konteynerin sınırları içinde çalışır" >&2
+          else
+            echo "⚠️  codex: bu makinede Codex sandbox'ı (bwrap) çalışmıyor; agent komut çalıştıramayacak. Çözüm: sysctl kernel.unprivileged_userns_clone=1 ya da AGENTS_ROOM_CODEX_SANDBOX=danger-full-access" >&2
+          fi
+        fi
+      fi
       # git push için sandbox'ta ağ açık olmalı. Codex varsayılan olarak *TOKEN* adlı değişkenleri kabuktan
       # siler; git kimlik yardımcısının ihtiyacı olanları açıkça listeleyip yalnızca onları geçiriyoruz.
-      codex exec --json --sandbox workspace-write \
+      codex exec --json --sandbox "$CODEX_SANDBOX" \
         -c 'sandbox_workspace_write.network_access=true' \
         -c 'shell_environment_policy.ignore_default_excludes=true' \
         -c 'shell_environment_policy.include_only=["PATH","HOME","USER","LANG","LC_*","TERM","TMPDIR","SHELL","AGENTS_ROOM_GIT_TOKEN","AGENTS_ROOM_BASE_BRANCH","GH_TOKEN","GIT_SSH_COMMAND","GIT_TERMINAL_PROMPT"]' \

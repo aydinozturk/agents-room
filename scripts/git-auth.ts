@@ -1,10 +1,10 @@
 // Ortak repoya erişim: GitHub token'ı (HTTPS) ya da SSH anahtarı.
 // Anahtar repo adresine, oda kaydına ya da team.json'a yazılmaz. Klon çalışırken git'in
 // kimlik yardımcısı token'ı AGENTS_ROOM_GIT_TOKEN ortam değişkeninden okur.
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 export type GitAuth = { kind: 'none' } | { kind: 'token'; token: string } | { kind: 'ssh'; sshKey: string };
 
@@ -95,6 +95,103 @@ export function cloneRepo(url: string, dir: string, auth: GitAuth): { ok: boolea
 export function fetchRepo(dir: string, auth: GitAuth, url = ''): void {
   configureWorkspace(dir, auth);
   spawnSync('git', ['-C', dir, 'fetch', '-q', 'origin'], { env: { ...process.env, ...gitEnv(auth, url) }, timeout: 60_000 });
+}
+
+/**
+ * Uzun sürebilen git komutu (büyük repo klonu): toplam süre sınırı yok. Yalnızca stallMs boyunca hiç
+ * çıktı gelmezse (ağ takıldıysa) durdurulur. --progress satırları onProgress'e gider.
+ */
+export function gitLong(
+  args: string[],
+  opt: { auth: GitAuth; url?: string; cwd?: string; stallMs?: number; onProgress?: (line: string) => void },
+): Promise<{ ok: boolean; error?: string }> {
+  const stallMs = opt.stallMs ?? (Number(process.env.AGENTS_ROOM_GIT_STALL_SEC) || 300) * 1000; // boş/geçersiz → 300 sn
+  return new Promise((done) => {
+    const p = spawn('git', [...gitConfigArgs(opt.auth), ...args], {
+      cwd: opt.cwd,
+      env: { ...process.env, ...gitEnv(opt.auth, opt.url ?? '') },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let tail = '';
+    let stalled = false;
+    let timer: NodeJS.Timeout;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        stalled = true;
+        p.kill('SIGTERM');
+      }, stallMs);
+    };
+    arm();
+    p.stderr.setEncoding('utf8');
+    p.stderr.on('data', (chunk: string) => {
+      arm();
+      tail = (tail + chunk).slice(-4000);
+      for (const line of chunk.split(/[\r\n]+/)) if (line.trim()) opt.onProgress?.(line.trim());
+    });
+    p.on('error', (e) => {
+      clearTimeout(timer);
+      done({ ok: false, error: e.message });
+    });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return done({ ok: true });
+      const last = tail.split(/[\r\n]+/).filter((l) => l.trim() && !/^(remote: )?(Counting|Compressing|Receiving|Resolving|Enumerating|Updating)/.test(l.trim()));
+      const msg = stalled ? `${stallMs / 1000} sn boyunca ilerleme yok (ağ bağlantısı?)` : last.slice(-3).join(' ') || `git çıkış kodu ${code}`;
+      done({ ok: false, error: redact(msg, opt.auth) });
+    });
+  });
+}
+
+/**
+ * Makine başına tek bir yerel önbellek (bare repo): büyük repo GitHub'dan bir kez indirilir, her agent'ın
+ * çalışma kopyası buradan saniyeler içinde açılır. Önbellek varsa yalnızca güncellenir.
+ */
+export async function syncCache(url: string, cache: string, auth: GitAuth, onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
+  if (existsSync(join(cache, 'HEAD'))) {
+    return gitLong(['-C', cache, 'fetch', '--prune', '--progress', url, '+refs/heads/*:refs/heads/*'], { auth, url, onProgress });
+  }
+  const tmp = `${cache}.tmp-${process.pid}`;
+  rmSync(tmp, { recursive: true, force: true });
+  const r = await gitLong(['clone', '--bare', '--progress', url, tmp], { auth, url, onProgress });
+  if (!r.ok) {
+    rmSync(tmp, { recursive: true, force: true });
+    return r;
+  }
+  renameSync(tmp, cache);
+  return { ok: true };
+}
+
+/** Agent'ın çalışma kopyası: önbellekten açılır, origin ortak repoya çevrilir, kimlik ayarlanır. */
+export async function cloneFromCache(url: string, cache: string, dir: string, auth: GitAuth): Promise<{ ok: boolean; error?: string }> {
+  const tmp = join(dirname(dir), `.${dir.split('/').pop()}.tmp-${process.pid}`);
+  rmSync(tmp, { recursive: true, force: true });
+  const steps: string[][] = [
+    ['clone', '-q', cache, tmp],
+    ['-C', tmp, 'remote', 'set-url', 'origin', url],
+  ];
+  for (const a of steps) {
+    const r = spawnSync('git', a, { encoding: 'utf8' });
+    if (r.status !== 0) {
+      rmSync(tmp, { recursive: true, force: true });
+      return { ok: false, error: redact((r.stderr || r.error?.message || '').trim(), auth) };
+    }
+  }
+  configureWorkspace(tmp, auth);
+  // origin/* başvuruları ortak repodan gelir (nesneler önbellekte olduğu için hızlıdır).
+  const f = await gitLong(['-C', tmp, 'fetch', '-q', 'origin'], { auth, url });
+  if (!f.ok) {
+    rmSync(tmp, { recursive: true, force: true });
+    return f;
+  }
+  renameSync(tmp, dir);
+  return { ok: true };
+}
+
+/** Var olan çalışma kopyasını günceller (kimlik ayarı + fetch); süre sınırı yerine takılma sınırı. */
+export async function refreshWorkspace(dir: string, auth: GitAuth, url = ''): Promise<{ ok: boolean; error?: string }> {
+  configureWorkspace(dir, auth);
+  return gitLong(['-C', dir, 'fetch', '-q', 'origin'], { auth, url });
 }
 
 /** Repo erişilebilir mi, boş mu, varsayılan dalı ne? */

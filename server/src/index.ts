@@ -64,7 +64,7 @@ function main() {
       console.log(`  panel girişi: ${join(dataDir, 'admin.token')}`);
       if (secret) console.log(`  kayıt sırrı:  ${join(dataDir, 'enroll.secret')}`);
     }
-    const remote = cfg.publicUrl ?? (cfg.inDocker ? undefined : lanAddresses()[0] && `http://${lanAddresses()[0]}:${cfg.port}`);
+    const remote = cfg.publicUrl ?? (cfg.inDocker || cfg.host !== '0.0.0.0' ? undefined : lanAddresses()[0] && `http://${lanAddresses()[0]}:${cfg.port}`);
     if (secret && remote) console.log(`\n  Başka bir makineden ekip kurmak için (proje kopyasında):\n    node scripts/team.ts --server ${remote}`);
     if (cfg.host === '0.0.0.0') console.log('\n  ⚠️  Tüm ağ arayüzlerinde dinleniyor. İnternete açmayın; uzak erişim için Tailscale/TLS kullanın (docs/tr/dagitik-kurulum.md).');
     console.log('');

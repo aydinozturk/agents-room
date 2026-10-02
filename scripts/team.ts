@@ -23,7 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { type GitAuth, cloneRepo, expandHome, fetchRepo, githubPushAccess, githubSlug, gitEnv, isHttps, isSsh, normalizeRepo, probeRepo, seedEmptyRepo } from './git-auth.ts';
+import { type GitAuth, cloneFromCache, cloneRepo, expandHome, githubPushAccess, githubSlug, gitEnv, isHttps, isSsh, normalizeRepo, probeRepo, refreshWorkspace, seedEmptyRepo, syncCache } from './git-auth.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKSPACES = process.env.AGENTS_ROOM_WORKSPACES ? resolve(process.env.AGENTS_ROOM_WORKSPACES) : join(ROOT, 'workspaces');
@@ -91,6 +91,7 @@ function teamFiles(room?: string): { file: string; team: TeamFile }[] {
     .map((file) => ({ file, team: JSON.parse(readFileSync(file, 'utf8')) as TeamFile }));
 }
 const alive = (pid: number) => {
+  if (!(pid > 0)) return false; // henüz başlatılmamış (kill(0) süreç grubunu sorardı)
   try {
     process.kill(pid, 0);
     return true;
@@ -481,6 +482,30 @@ if (existsSync(prevFile)) {
   const prev = JSON.parse(readFileSync(prevFile, 'utf8')) as TeamFile;
   team.agents = prev.agents.filter((a) => alive(a.pid) && !plan.some((p) => p.name === a.name));
 }
+// İsimler klon/kayıt öncesinde yazılır: bir adım başarısız olup konteyner yeniden başlarsa aynı isimler kullanılır.
+mkdirSync(WS, { recursive: true });
+writeFileSync(prevFile, JSON.stringify({ ...team, agents: [...team.agents, ...plan.map((p) => ({ name: p.name, client: p.client, role: p.role, pid: 0, log: '', dir: join(WS, p.name) }))] }, null, 2));
+
+// Uzak repo makine başına bir kez indirilir (yerel önbellek); agent kopyaları oradan açılır.
+const remoteRepo = isHttps(repo) || isSsh(repo);
+const CACHE = join(WS, '.repo-cache.git');
+if (remoteRepo) {
+  const fresh = !existsSync(join(CACHE, 'HEAD'));
+  console.log('');
+  process.stdout.write(fresh ? `  repo indiriliyor (bu makinede bir kez; büyük repolarda birkaç dakika sürebilir)…\n` : `  repo önbelleği güncelleniyor…\n`);
+  let lastShown = 0;
+  let lastLine = '';
+  const t0 = Date.now();
+  const r = await syncCache(repo, CACHE, gitAuth, (line) => {
+    lastLine = line;
+    if (Date.now() - lastShown > 10_000) {
+      lastShown = Date.now();
+      console.log(c.dim(`    ${line.slice(0, 120)}`));
+    }
+  });
+  if (!r.ok) fail(`Repo indirilemedi (${repo}): ${r.error}\n  Bu makinenin repoya erişimi (anahtar/ağ) olmalı. Takılma süresi: AGENTS_ROOM_GIT_STALL_SEC (varsayılan 300).`);
+  console.log(c.ok(`  ✓ repo hazır`) + c.dim(` (${Math.round((Date.now() - t0) / 1000)} sn${lastLine && fresh ? ', ' + lastLine.slice(0, 80) : ''})`));
+}
 console.log('');
 for (const p of plan) {
   let enr: { token: string };
@@ -501,9 +526,12 @@ for (const p of plan) {
   }
   const dir = join(WS, p.name);
   if (!existsSync(dir)) {
-    const r = cloneRepo(repo, dir, gitAuth);
+    const r = remoteRepo ? await cloneFromCache(repo, CACHE, dir, gitAuth) : cloneRepo(repo, dir, gitAuth);
     if (!r.ok) fail(`Repo klonlanamadı (${repo}): ${r.error}\n  Bu makinenin repoya erişimi (anahtar/ağ) olmalı.`);
-  } else fetchRepo(dir, gitAuth, repo);
+  } else {
+    const r = await refreshWorkspace(dir, gitAuth, repo);
+    if (!r.ok) console.log(c.warn(`  ⚠️  ${p.name}: repo güncellenemedi (${r.error}); mevcut kopyayla devam ediliyor.`));
+  }
   spawnSync('git', ['-C', dir, 'config', 'user.name', p.name]);
   spawnSync('git', ['-C', dir, 'config', 'user.email', `${p.name}@agents-room.local`]);
   const agentEnv: Record<string, string> = {

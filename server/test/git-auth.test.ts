@@ -2,18 +2,22 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createServer } from 'node:net';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CRED_HELPER,
+  cloneFromCache,
   cloneRepo,
+  gitLong,
   githubSlug,
   gitEnv,
   normalizeRepo,
   probeRepo,
   redact,
   seedEmptyRepo,
+  syncCache,
   type GitAuth,
 } from '../../scripts/git-auth.ts';
 
@@ -87,4 +91,48 @@ test('token ile: erişim kontrolü, boş repoya ilk commit, klon ve agent gibi p
   assert.equal(push.status, 0, push.stderr);
   const refs = spawnSync('git', ['-C', join(root, 'proje.git'), 'branch', '--list'], { encoding: 'utf8' }).stdout;
   assert.match(refs, /ar\/oda\/t1-test/);
+});
+
+test('büyük repo: makine başına tek önbellek, agent kopyaları oradan; origin ortak repo', async () => {
+  const url = `${base}/proje.git`;
+  const auth: GitAuth = { kind: 'token', token: TOKEN };
+  const cache = join(root, 'ws', '.repo-cache.git');
+  const lines: string[] = [];
+  const s1 = await syncCache(url, cache, auth, (l) => lines.push(l));
+  assert.equal(s1.ok, true, s1.error);
+  assert.doesNotMatch(readFileSync(join(cache, 'config'), 'utf8'), new RegExp(TOKEN));
+
+  const dir = join(root, 'ws', 'ela');
+  const c = await cloneFromCache(url, cache, dir, auth);
+  assert.equal(c.ok, true, c.error);
+  const git = (args: string[], env: Record<string, string> = {}) =>
+    spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.equal(git(['remote', 'get-url', 'origin']).stdout.trim(), url);
+  assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim(), 'main');
+  assert.match(git(['branch', '-r']).stdout, /origin\/ar\/oda\/t1-test/);
+  writeFileSync(join(dir, 'b.txt'), 'b\n');
+  git(['add', '-A']);
+  git(['commit', '-qm', 'b']);
+  const push = git(['push', '-q', 'origin', 'HEAD:refs/heads/ar/oda/t2-b'], gitEnv(auth, url));
+  assert.equal(push.status, 0, push.stderr);
+
+  // Önbellek güncellenince yeni dal gelir; yanlış anahtarla güncelleme başarısız olur ve token sızmaz.
+  const s2 = await syncCache(url, cache, auth);
+  assert.equal(s2.ok, true, s2.error);
+  assert.match(spawnSync('git', ['-C', cache, 'branch'], { encoding: 'utf8' }).stdout, /ar\/oda\/t2-b/);
+  const bad = await syncCache(url, join(root, 'ws', 'yok.git'), { kind: 'token', token: 'yanlis-anahtar' });
+  assert.equal(bad.ok, false);
+  assert.doesNotMatch(bad.error!, /yanlis-anahtar/);
+});
+
+test('takılan git bağlantısı toplam süreyle değil, ilerleme olmamasıyla kesilir', async () => {
+  const hang = createServer(() => {}); // bağlantıyı kabul eder, hiç yanıt vermez
+  await new Promise<void>((r) => hang.listen(0, '127.0.0.1', r));
+  const port = (hang.address() as { port: number }).port;
+  const t0 = Date.now();
+  const r = await gitLong(['ls-remote', `http://127.0.0.1:${port}/x.git`], { auth: { kind: 'none' }, stallMs: 1500 });
+  hang.close();
+  assert.equal(r.ok, false);
+  assert.match(r.error!, /ilerleme yok/);
+  assert.ok(Date.now() - t0 < 10_000);
 });

@@ -139,8 +139,14 @@ JSON
   DUR=$(( $(date +%s) - START ))
   if (( DUR < 60 )); then FAST=$(( ${FAST:-0} + 1 )); else FAST=0; fi
   if (( FAST >= 2 )); then
-    echo "oturum ${DUR} sn'de bitti (art arda $FAST kez). Logun sonu:" >&2
-    tail -n 3 "$LOG" 2>/dev/null | cut -c1-300 >&2
+    # stream-json loglarında asıl neden "result" alanındadır (ör. "Not logged in · Please run /login").
+    REASON=$(grep -o '"result":"[^"]*"' "$LOG" 2>/dev/null | tail -n 1 | cut -c11- | tr -d '"' | cut -c1-300 || true)
+    if [[ -n "$REASON" ]]; then
+      echo "oturum ${DUR} sn'de bitti (art arda $FAST kez): $REASON" >&2
+    else
+      echo "oturum ${DUR} sn'de bitti (art arda $FAST kez). Logun sonu:" >&2
+      tail -n 3 "$LOG" 2>/dev/null | cut -c1-300 >&2
+    fi
   fi
   if (( FAST >= 5 )); then
     echo "■ oturumlar art arda hemen bitiyor; agent durduruldu. Model girişini (agents-room login $CLIENT) ve logu kontrol edin: $LOG" >&2

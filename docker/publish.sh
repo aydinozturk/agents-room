@@ -2,7 +2,7 @@
 # agents-room imajlarını Docker Hub'a amd64 + arm64 için birlikte yükler.
 #
 #   docker login -u <kullanıcı>                       # önce bir kez (parola yerine Docker Hub erişim anahtarı önerilir)
-#   docker/publish.sh <kullanıcı> [sürüm] [hedef]     # ör. docker/publish.sh aydinozturk 0.3.1
+#   docker/publish.sh <kullanıcı> [sürüm] [hedef]     # ör. docker/publish.sh aydinozturk 0.3.2
 #
 # hedef: all (varsayılan) | agent | server
 # Sonuç: <kullanıcı>/agents-room-agent:<sürüm> ve <kullanıcı>/agents-room-server:<sürüm>, ikisi de :latest

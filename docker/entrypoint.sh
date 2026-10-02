@@ -8,7 +8,11 @@
 #   agents-room start                     (konteyner açılışı) ayar varsa ekibi başlatır, yoksa kurulumu bekler
 #
 # Ayar önceliği: konteyner ortamı (compose .env) > /data/agents-room.env (setup'ın kaydettiği).
-set -euo pipefail
+set -Eeuo pipefail
+# set -e ile sessizce çıkılmasın: son başarısız komut kaydedilir, hata koduyla çıkılırsa yazılır.
+LAST_ERR=""
+trap 'LAST_ERR="satır $LINENO: $BASH_COMMAND"' ERR
+trap 'rc=$?; if [[ $rc != 0 && -n "$LAST_ERR" ]]; then echo "agents-room: hata (kod $rc, $LAST_ERR)" >&2; fi' EXIT
 
 CONFIG=/data/agents-room.env
 TEAM=/opt/agents-room/scripts/team.ts
@@ -30,6 +34,7 @@ load_config() {
     key="${BASH_REMATCH[1]}"
     [[ -z "${!key:-}" ]] && eval "export $line"
   done < "$CONFIG"
+  return 0 # son satırın anahtarı ortamda zaten varsa döngü 1 döner; set -e konteyneri sessizce kapatırdı
 }
 configured() { [[ -n "${AGENTS_ROOM_SERVER:-}" && -n "${AGENTS_ROOM_ROOM:-}" && -n "${AGENTS_ROOM_ENROLL_SECRET:-}" ]]; }
 uses() { [[ ( "${ORCHESTRATORS:-0}" != 0 && "${ORCH_CLIENTS:-claude}" == *"$1"* ) || "${2:-0}" != 0 ]]; }
@@ -177,18 +182,42 @@ build_args() {
   return 0
 }
 
+# Ekipte kullanılan ama girişi yapılmamış platformlar (claude/codex/gemini).
+missing_logins() {
+  local k w out=()
+  for k in claude codex gemini; do
+    w="${k^^}_WORKERS"
+    if uses "$k" "${!w:-0}" && ! logged_in "$k"; then out+=("$k"); fi
+  done
+  echo "${out[*]}"
+}
+
+# Giriş yoksa agent'ları başlatmaz: oturumlar hemen biter, konteyner yeniden başlatma döngüsüne düşerdi.
+# Giriş yapılınca kendiliğinden devam eder. Denetimi atlamak için AGENTS_ROOM_SKIP_LOGIN_CHECK=1.
+wait_for_logins() {
+  [[ "${AGENTS_ROOM_SKIP_LOGIN_CHECK:-0}" == 1 ]] && return 0
+  local missing shown=""
+  while missing=$(missing_logins); [[ -n "$missing" ]]; do
+    if [[ "$missing" != "$shown" ]]; then
+      shown="$missing"
+      echo "agents-room: model girişi bekleniyor: $missing (ekip girişten sonra kendiliğinden başlar)" >&2
+      for k in $missing; do
+        echo "  Giriş:  docker exec -it $(hostname) agents-room login $k" >&2
+      done
+      echo "  (ya da compose .env'e anahtar yazın: CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)" >&2
+    fi
+    sleep 10
+    load_config
+  done
+  [[ -n "$shown" ]] && echo "agents-room: giriş tamam, ekip başlatılıyor." >&2
+  return 0
+}
+
 prepare_clients() {
   # Codex: API anahtarı verildiyse bir kez giriş yapılır (oturum kalıcı birimde durur).
   if uses codex "${CODEX_WORKERS:-0}" && [[ -n "${OPENAI_API_KEY:-}" && ! -f "$HOME/.codex/auth.json" ]]; then
     printenv OPENAI_API_KEY | codex login --with-api-key >/dev/null
   fi
-  local k w
-  for k in claude codex gemini; do
-    w="${k^^}_WORKERS"
-    if uses "$k" "${!w:-0}" && ! logged_in "$k"; then
-      echo "⚠️  $k için giriş yok. Konteynerde bir kez: docker exec -it <konteyner> agents-room login $k" >&2
-    fi
-  done
   # Hermes (deneysel): imaj INSTALL_HERMES=1 ile derlenmiş olmalı; model bağlantısı ortamdan gelir.
   if uses hermes "${HERMES_WORKERS:-0}"; then
     command -v hermes >/dev/null || { echo "Hermes imajda yok: $COMPOSE_HINT build --build-arg INSTALL_HERMES=1" >&2; exit 2; }
@@ -216,6 +245,7 @@ EOF
   fi
   mkdir -p "$AGENTS_ROOM_WORKSPACES"
   prepare_clients
+  wait_for_logins
   build_args
   exec node "$TEAM" "${ARGS[@]}" --foreground
 }

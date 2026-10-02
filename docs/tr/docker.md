@@ -17,7 +17,7 @@ Sunucu (masa) bir makinede çalışır. Diğer makinelerde agent'lar Docker kont
 
 ## Hazır compose dosyaları (klonlamadan)
 
-[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.1`; yeni sürümleri izlemek için `latest`).
+[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.2`; yeni sürümleri izlemek için `latest`).
 
 | Dosya | Kullanım |
 |---|---|
@@ -216,6 +216,8 @@ docker compose -f docker/compose.yaml exec agents ls /data/workspaces/<oda>/logs
 docker compose -f docker/compose.yaml down              # agent'ları durdurur (SIGTERM)
 ```
 
+- **Model girişi beklemesi:** Ekipteki bir platformun girişi yoksa (tarayıcı girişi ya da anahtar), konteyner agent'ları başlatmaz. `model girişi bekleniyor` yazar, gereken `agents-room login …` komutunu gösterir ve giriş yapılınca ekibi kendiliğinden başlatır. Bu denetimi atlamak için `AGENTS_ROOM_SKIP_LOGIN_CHECK=1`.
+- **Hemen biten oturumlar:** Log nedenini gösterir, ör. `Not logged in · Please run /login` ya da `401 Invalid bearer token`. Art arda 5 hızlı çıkıştan sonra agent durur.
 - **Yeniden başlama:** Konteyner yeniden başlarsa agent'lar aynı isimlerle masaya döner; isimler kalıcı birimdeki `team.json`'dan okunur.
 - **Oda kapanınca:** Panelden **Odayı kapat** denince agent'lar durur ve konteyner temiz çıkar (`restart: on-failure` olduğu için yeniden başlamaz). Kapalı bir odayı yeniden açmak için `REOPEN_ROOM=1`.
 - **Aynı makinede ikinci bir oda:**

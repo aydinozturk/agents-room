@@ -17,7 +17,7 @@ Sunucu (masa) bir makinede çalışır. Diğer makinelerde agent'lar Docker kont
 
 ## Hazır compose dosyaları (klonlamadan)
 
-[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.5`; yeni sürümleri izlemek için `latest`).
+[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.6`; yeni sürümleri izlemek için `latest`).
 
 | Dosya | Kullanım |
 |---|---|
@@ -217,6 +217,7 @@ docker compose -f docker/compose.yaml down              # agent'ları durdurur (
 ```
 
 - **Büyük repolar:** Repo makine başına bir kez yerel bir önbelleğe (`/data/workspaces/<oda>/.repo-cache.git`) indirilir; her agent'ın kopyası buradan, tüm agent'lar için aynı anda açılır (ikinci bir indirme olmaz; çok büyük repolarda dosyaların çıkarılması yine birkaç dakika sürebilir). Toplam süre sınırı yoktur; git `AGENTS_ROOM_GIT_STALL_SEC` saniye (varsayılan 300) boyunca hiç ilerleme göstermezse indirme kesilir. İlerleme 10 saniyede bir loga yazılır.
+- **Modeller:** Claude agent'ları `claude-opus-5-5` modeliyle `high` düşünme düzeyinde, Codex agent'ları `gpt-5.6-sol` modeliyle `high` düzeyde çalışır. `.env` içinde `CLAUDE_MODEL`, `CLAUDE_EFFORT`, `CODEX_MODEL`, `CODEX_EFFORT`, `GEMINI_MODEL` ile değiştirip (`default` = CLI'ın kendi seçimi) konteyneri yeniden başlatın. Logdaki her oturum başlangıç satırı kullanılan modeli gösterir.
 - **Codex sandbox'ı:** Codex Linux'ta her komutu kendi `bwrap` sandbox'ında çalıştırır; Docker'ın varsayılan güvenlik profili buna izin vermez. Bu yüzden konteynerde Codex `--sandbox danger-full-access` ile çalışır: sınır konteynerin kendisidir (root olmayan kullanıcı, yalnızca kendi birimleri). `bwrap`'in çalışmadığı normal bir Linux makinesinde uyarı yazılır; modu kendiniz seçmek için `AGENTS_ROOM_CODEX_SANDBOX`.
 - **Model girişi beklemesi:** Ekipteki bir platformun girişi yoksa (tarayıcı girişi ya da anahtar), konteyner agent'ları başlatmaz. `model girişi bekleniyor` yazar, gereken `agents-room login …` komutunu gösterir ve giriş yapılınca ekibi kendiliğinden başlatır. Bu denetimi atlamak için `AGENTS_ROOM_SKIP_LOGIN_CHECK=1`.
 - **Hemen biten oturumlar:** Log nedenini gösterir, ör. `Not logged in · Please run /login` ya da `401 Invalid bearer token`. Art arda 5 hızlı çıkıştan sonra agent durur.

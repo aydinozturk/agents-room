@@ -68,10 +68,20 @@ room_closed() {
     | grep -q 'is closed'
 }
 
+# Platform başına model ve düşünme düzeyi (--model argümanı önce gelir). "default" → CLI'ın kendi varsayılanı.
+EFFORT=""
+case "$CLIENT" in
+  claude) MODEL="${MODEL:-${CLAUDE_MODEL:-claude-opus-5-5}}"; EFFORT="${CLAUDE_EFFORT:-high}" ;;
+  codex) MODEL="${MODEL:-${CODEX_MODEL:-gpt-5.6-sol}}"; EFFORT="${CODEX_EFFORT:-high}" ;;
+  gemini) MODEL="${MODEL:-${GEMINI_MODEL:-}}" ;;
+esac
+[[ "$MODEL" == default ]] && MODEL=""
+[[ "$EFFORT" == default ]] && EFFORT=""
+
 for ((i = 1; i <= SESSIONS; i++)); do
   if room_closed; then echo "■ \"$ROOM\" odası kapalı; agent durduruldu."; break; fi
   LOG="$LOGDIR/${CLIENT}-${ROLE}-${ROOM}-$(date +%Y%m%d-%H%M%S).log"
-  echo "▶ oturum $i/$SESSIONS ($CLIENT, $ROLE, oda=$ROOM) → $LOG"
+  echo "▶ oturum $i/$SESSIONS ($CLIENT${MODEL:+ $MODEL}${EFFORT:+/$EFFORT}, $ROLE, oda=$ROOM) → $LOG"
   START=$(date +%s)
   set +e # CLI hata koduyla çıksa da döngü sürsün (aşağıda hızlı çıkışlar ayrıca ele alınır)
   case "$CLIENT" in
@@ -88,7 +98,7 @@ EOF
         --add-dir "$SKILL" "$(dirname "$REPO")" \
         --permission-mode acceptEdits \
         --allowedTools "mcp__agents-room" "Read" "Edit" "Write" "Glob" "Grep" "Bash(git:*)" "Bash(npm:*)" "Bash(npx:*)" "Bash(node:*)" "Bash(ls:*)" "Bash(mkdir:*)" "Bash(cat:*)" "WebSearch" "WebFetch" ${GH_CLAUDE[@]+"${GH_CLAUDE[@]}"} \
-        ${MODEL:+--model "$MODEL"} \
+        ${MODEL:+--model "$MODEL"} ${EFFORT:+--effort "$EFFORT"} \
         --output-format stream-json --verbose ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
       rm -rf "$CFG_DIR"
       ;;
@@ -118,7 +128,7 @@ EOF
         -c 'mcp_servers.agents-room.bearer_token_env_var="AGENTS_ROOM_TOKEN"' \
         -c 'mcp_servers.agents-room.tool_timeout_sec=120' \
         -c 'mcp_servers.agents-room.default_tools_approval_mode="approve"' \
-        ${MODEL:+-m "$MODEL"} ${EXTRA[@]+"${EXTRA[@]}"} "$PROMPT" | tee "$LOG" >/dev/null
+        ${MODEL:+-m "$MODEL"} ${EFFORT:+-c "model_reasoning_effort=\"$EFFORT\""} ${EXTRA[@]+"${EXTRA[@]}"} "$PROMPT" | tee "$LOG" >/dev/null
       ;;
     hermes)
       # Hermes MCP bağlantısını ~/.hermes/config.yaml'dan okur (install-client.sh çıktısına bakın).

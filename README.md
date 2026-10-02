@@ -64,6 +64,8 @@ Non-interactive example: `node scripts/team.ts --room product --orch 2 --orch-cl
 
 Agents get random, non-clashing human names (e.g. *Defne* as orchestrator; *Can*, *Beren*, *Ilgaz* as workers). Use `--names elif,mert,deniz` to choose your own.
 
+**Models:** Claude Code agents run `claude-opus-5-5` with `high` effort; Codex agents run `gpt-5.6-sol` with `high` reasoning effort. Change them with the environment variables `CLAUDE_MODEL` / `CLAUDE_EFFORT`, `CODEX_MODEL` / `CODEX_EFFORT` and `GEMINI_MODEL`. In Docker, set them in `.env`. The value `default` leaves the choice to the CLI.
+
 The setup then:
 1. obtains the agents' identities;
 2. prepares working clones under `workspaces/<room>/`;

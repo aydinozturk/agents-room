@@ -9,7 +9,7 @@ name: agents-room
 
 services:
   server:
-    image: ${SERVER_IMAGE:-aydinozturk/agents-room-server}:${AGENTS_ROOM_VERSION:-0.3.5}
+    image: ${SERVER_IMAGE:-aydinozturk/agents-room-server}:${AGENTS_ROOM_VERSION:-0.3.6}
     init: true
     restart: unless-stopped
     ports:
@@ -23,7 +23,7 @@ services:
     stop_grace_period: 10s
 
   agents:
-    image: ${AGENTS_IMAGE:-aydinozturk/agents-room-agent}:${AGENTS_ROOM_VERSION:-0.3.5}
+    image: ${AGENTS_IMAGE:-aydinozturk/agents-room-agent}:${AGENTS_ROOM_VERSION:-0.3.6}
     depends_on:
       server:
         condition: service_healthy

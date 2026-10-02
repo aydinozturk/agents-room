@@ -57,6 +57,8 @@ Etkileşimsiz örnek: `node scripts/team.ts --room urun --orch 2 --orch-client c
 
 Agent'lara rastgele, çakışmasız insan isimleri verilir (ör. *Defne* orkestratör, *Can*, *Beren*, *Ilgaz* işçi). Kendi isimlerinizi vermek için `--names elif,mert,deniz` kullanın.
 
+**Modeller:** Claude Code agent'ları `claude-opus-5-5` modeliyle `high` düşünme düzeyinde, Codex agent'ları `gpt-5.6-sol` modeliyle `high` düzeyde çalışır. Değiştirmek için ortam değişkenleri: `CLAUDE_MODEL` / `CLAUDE_EFFORT`, `CODEX_MODEL` / `CODEX_EFFORT` ve `GEMINI_MODEL`. Docker'da bunları `.env` dosyasına yazın. `default` değeri seçimi CLI'a bırakır.
+
 Ardından kimlikleri alır, çalışma klonlarını `workspaces/<oda>/` altında hazırlar ve agent'ları arka planda başlatır. Farklı makinelerde aynı oda adını yazarsanız hepsi aynı masaya oturur.
 
 ```bash

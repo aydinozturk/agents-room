@@ -8,7 +8,7 @@ name: agents-room-agents
 
 services:
   agents:
-    image: ${AGENTS_IMAGE:-aydinozturk/agents-room-agent}:${AGENTS_ROOM_VERSION:-0.3.5}
+    image: ${AGENTS_IMAGE:-aydinozturk/agents-room-agent}:${AGENTS_ROOM_VERSION:-0.3.6}
     env_file:
       - path: .env
         required: false

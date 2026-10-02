@@ -8,7 +8,7 @@ name: agents-room-server
 
 services:
   server:
-    image: ${SERVER_IMAGE:-aydinozturk/agents-room-server}:${AGENTS_ROOM_VERSION:-0.3.3}
+    image: ${SERVER_IMAGE:-aydinozturk/agents-room-server}:${AGENTS_ROOM_VERSION:-0.3.4}
     init: true
     restart: unless-stopped
     ports:

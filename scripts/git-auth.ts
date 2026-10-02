@@ -162,28 +162,31 @@ export async function syncCache(url: string, cache: string, auth: GitAuth, onPro
   return { ok: true };
 }
 
-/** Agent'ın çalışma kopyası: önbellekten açılır, origin ortak repoya çevrilir, kimlik ayarlanır. */
-export async function cloneFromCache(url: string, cache: string, dir: string, auth: GitAuth): Promise<{ ok: boolean; error?: string }> {
+/**
+ * Agent'ın çalışma kopyası: önbellekten açılır (nesneler sabit bağlantıyla paylaşılır, indirme yok), origin ortak
+ * repoya çevrilir, kimlik ayarlanır. Büyük repolarda dosyaların çıkarılması dakikalar sürebilir: ilerleme onProgress'e gider.
+ */
+export async function cloneFromCache(
+  url: string,
+  cache: string,
+  dir: string,
+  auth: GitAuth,
+  onProgress?: (line: string) => void,
+): Promise<{ ok: boolean; error?: string }> {
   const tmp = join(dirname(dir), `.${dir.split('/').pop()}.tmp-${process.pid}`);
   rmSync(tmp, { recursive: true, force: true });
-  const steps: string[][] = [
-    ['clone', '-q', cache, tmp],
-    ['-C', tmp, 'remote', 'set-url', 'origin', url],
-  ];
-  for (const a of steps) {
-    const r = spawnSync('git', a, { encoding: 'utf8' });
-    if (r.status !== 0) {
-      rmSync(tmp, { recursive: true, force: true });
-      return { ok: false, error: redact((r.stderr || r.error?.message || '').trim(), auth) };
-    }
-  }
+  const failed = (r: { ok: boolean; error?: string }) => {
+    rmSync(tmp, { recursive: true, force: true });
+    return r;
+  };
+  const c = await gitLong(['clone', '--progress', cache, tmp], { auth: { kind: 'none' }, onProgress });
+  if (!c.ok) return failed(c);
+  const r = spawnSync('git', ['-C', tmp, 'remote', 'set-url', 'origin', url], { encoding: 'utf8' });
+  if (r.status !== 0) return failed({ ok: false, error: redact((r.stderr || r.error?.message || '').trim(), auth) });
   configureWorkspace(tmp, auth);
   // origin/* başvuruları ortak repodan gelir (nesneler önbellekte olduğu için hızlıdır).
-  const f = await gitLong(['-C', tmp, 'fetch', '-q', 'origin'], { auth, url });
-  if (!f.ok) {
-    rmSync(tmp, { recursive: true, force: true });
-    return f;
-  }
+  const f = await gitLong(['-C', tmp, 'fetch', '--progress', 'origin'], { auth, url, onProgress });
+  if (!f.ok) return failed(f);
   renameSync(tmp, dir);
   return { ok: true };
 }
@@ -191,7 +194,7 @@ export async function cloneFromCache(url: string, cache: string, dir: string, au
 /** Var olan çalışma kopyasını günceller (kimlik ayarı + fetch); süre sınırı yerine takılma sınırı. */
 export async function refreshWorkspace(dir: string, auth: GitAuth, url = ''): Promise<{ ok: boolean; error?: string }> {
   configureWorkspace(dir, auth);
-  return gitLong(['-C', dir, 'fetch', '-q', 'origin'], { auth, url });
+  return gitLong(['-C', dir, 'fetch', '--progress', 'origin'], { auth, url });
 }
 
 /** Repo erişilebilir mi, boş mu, varsayılan dalı ne? */

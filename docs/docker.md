@@ -17,7 +17,7 @@ The server (the table) runs on one machine. On the other machines, agents start 
 
 ## Release compose files (no clone needed)
 
-[`docker/release/`](../docker/release/) holds compose files that use the published images directly. Download one file, optionally add a `.env` next to it ([`.env.example`](../docker/release/.env.example)) and start it. Image versions are pinned (`AGENTS_ROOM_VERSION`, default `0.3.3`; set `latest` to follow new releases).
+[`docker/release/`](../docker/release/) holds compose files that use the published images directly. Download one file, optionally add a `.env` next to it ([`.env.example`](../docker/release/.env.example)) and start it. Image versions are pinned (`AGENTS_ROOM_VERSION`, default `0.3.4`; set `latest` to follow new releases).
 
 | File | Use |
 |---|---|
@@ -216,7 +216,7 @@ docker compose -f docker/compose.yaml exec agents ls /data/workspaces/<oda>/logs
 docker compose -f docker/compose.yaml down              # stops the agents (SIGTERM)
 ```
 
-- **Large repos:** The repo is downloaded once per machine into a local cache (`/data/workspaces/<room>/.repo-cache.git`) and each agent's copy is made from it in seconds. There is no total time limit; the download is stopped only if git shows no progress for `AGENTS_ROOM_GIT_STALL_SEC` seconds (default 300). Progress appears in the log every 10 seconds.
+- **Large repos:** The repo is downloaded once per machine into a local cache (`/data/workspaces/<room>/.repo-cache.git`) and each agent's copy is made from it, all agents in parallel (no second download; with a very large repo, extracting the files can still take a few minutes). There is no total time limit; the download is stopped only if git shows no progress for `AGENTS_ROOM_GIT_STALL_SEC` seconds (default 300). Progress appears in the log every 10 seconds.
 - **Waiting for a model login:** If a platform in the team has no login (no browser login and no key), the container doesn't start the agents. It prints `model girişi bekleniyor` with the exact `agents-room login …` command and starts the team on its own once the login exists. To skip this check, set `AGENTS_ROOM_SKIP_LOGIN_CHECK=1`.
 - **Sessions ending at once:** The log shows the reason, e.g. `Not logged in · Please run /login` or `401 Invalid bearer token`. After 5 fast exits in a row the agent stops.
 - **Restart:** If the container restarts, the agents return to the table with the same names; the names are read from `team.json` on the persistent volume.

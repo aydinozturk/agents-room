@@ -489,6 +489,8 @@ writeFileSync(prevFile, JSON.stringify({ ...team, agents: [...team.agents, ...pl
 // Uzak repo makine başına bir kez indirilir (yerel önbellek); agent kopyaları oradan açılır.
 const remoteRepo = isHttps(repo) || isSsh(repo);
 const CACHE = join(WS, '.repo-cache.git');
+// Yarıda kalmış (konteyner durdurulmuş) indirme/kopya klasörleri: büyük repolarda gigabaytlarca yer tutar.
+for (const f of readdirSync(WS)) if (/^\..+\.tmp-\d+$/.test(f) || /^\.repo-cache\.git\.tmp-\d+$/.test(f)) rmSync(join(WS, f), { recursive: true, force: true });
 if (remoteRepo) {
   const fresh = !existsSync(join(CACHE, 'HEAD'));
   console.log('');
@@ -505,6 +507,31 @@ if (remoteRepo) {
   });
   if (!r.ok) fail(`Repo indirilemedi (${repo}): ${r.error}\n  Bu makinenin repoya erişimi (anahtar/ağ) olmalı. Takılma süresi: AGENTS_ROOM_GIT_STALL_SEC (varsayılan 300).`);
   console.log(c.ok(`  ✓ repo hazır`) + c.dim(` (${Math.round((Date.now() - t0) / 1000)} sn${lastLine && fresh ? ', ' + lastLine.slice(0, 80) : ''})`));
+}
+
+// Eksik çalışma kopyaları birlikte açılır (büyük repolarda dosyaların çıkarılması agent başına dakikalar sürebilir).
+const freshDirs = new Set<string>();
+const missingWs = plan.filter((p) => !existsSync(join(WS, p.name)));
+if (missingWs.length) {
+  console.log(`  çalışma kopyaları hazırlanıyor: ${missingWs.map((p) => p.name).join(', ')}…`);
+  const t0 = Date.now();
+  const latest = new Map<string, string>();
+  const ticker = setInterval(() => {
+    for (const [n, l] of latest) console.log(c.dim(`    ${n}: ${l.slice(0, 110)}`));
+    latest.clear();
+  }, 10_000);
+  const results = await Promise.all(
+    missingWs.map(async (p) => {
+      const dir = join(WS, p.name);
+      const r = remoteRepo ? await cloneFromCache(repo, CACHE, dir, gitAuth, (l) => latest.set(p.name, l)) : cloneRepo(repo, dir, gitAuth);
+      if (r.ok) freshDirs.add(dir);
+      return { name: p.name, ...r };
+    }),
+  );
+  clearInterval(ticker);
+  const bad = results.find((r) => !r.ok);
+  if (bad) fail(`Repo klonlanamadı (${repo}): ${bad.error}\n  Bu makinenin repoya erişimi (anahtar/ağ) olmalı.`);
+  console.log(c.ok(`  ✓ çalışma kopyaları hazır`) + c.dim(` (${Math.round((Date.now() - t0) / 1000)} sn)`));
 }
 console.log('');
 for (const p of plan) {
@@ -525,10 +552,7 @@ for (const p of plan) {
     fail(`${p.name} kaydedilemedi: ${(e as Error).message}`);
   }
   const dir = join(WS, p.name);
-  if (!existsSync(dir)) {
-    const r = remoteRepo ? await cloneFromCache(repo, CACHE, dir, gitAuth) : cloneRepo(repo, dir, gitAuth);
-    if (!r.ok) fail(`Repo klonlanamadı (${repo}): ${r.error}\n  Bu makinenin repoya erişimi (anahtar/ağ) olmalı.`);
-  } else {
+  if (!freshDirs.has(dir)) {
     const r = await refreshWorkspace(dir, gitAuth, repo);
     if (!r.ok) console.log(c.warn(`  ⚠️  ${p.name}: repo güncellenemedi (${r.error}); mevcut kopyayla devam ediliyor.`));
   }

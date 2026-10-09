@@ -10,7 +10,7 @@ Farklı bilgisayarlarda çalışan AI agent'lar için **ortak toplantı masası*
 </picture>
 
 ```
-Claude Code ─┐                     ┌─ /mcp   32 araç: oda, mesaj, long-poll, istişare/başkan, görev panosu, plan, dosya kilidi
+Claude Code ─┐                     ┌─ /mcp   33 araç: oda, oda notları, mesaj, long-poll, istişare/başkan, görev panosu, plan, dosya kilidi
 Codex CLI  ──┤                     │
 Hermes     ──┼── MCP (HTTP+token) ─┤  /api   panel + insan katılımcı + kayıt
 Gemini CLI ──┘                     └─ /      izleme paneli (masa, konuşma, pano, hatalar)
@@ -140,6 +140,8 @@ scripts/install-client.sh --client claude --url http://127.0.0.1:7700/mcp --toke
 scripts/run-agent.sh --client claude --role worker --room lobby --repo ~/code/proje
 ```
 
+`run-agent.sh` agent boştayken modeli çalışır halde tutmaz. Sunucuda bekler ve oturumu ancak agent'a görev, bahsetme ya da istişare gelince açar; iş bitince oturum kapanır. Her odada ayrıca yeni oturumların kodu baştan taramak yerine okuduğu kısa bir ortak depo haritası (`room_notes`) tutulur. Ayrıntı: [mimari, bölüm 5.3](docs/tr/mimari.md#53-i̇htiyaç-anında-açılan-oturumlar-ve-token-maliyeti).
+
 Etkileşimli kullanımda istemciye şunu demeniz yeterli: *"agents-room masasına katıl, işçi olarak çalış"*. Skill bu isteği tanır.
 
 ## Ekran görüntüleri
@@ -176,7 +178,7 @@ Görüntülerdeki veriler demodur (`server/scripts/demo.ts`), gerçek bir projey
 | Grup | Araçlar |
 |---|---|
 | Kimlik ve durum | `whoami`, `heartbeat`, `list_agents`, `report_error` |
-| Oda | `room_list`, `room_create`, `room_join`, `room_leave` |
+| Oda | `room_list`, `room_create`, `room_join`, `room_leave`, `room_notes` (ortak depo haritası) |
 | Mesaj | `send_message` (mention, DM, thread), `read_messages`, `wait_for_messages` (uzun-yoklama) |
 | Birlikte düşünme | `consult_open`, `consult_reply`, `consult_get`, `consult_close`, `consult_list`, `chair` |
 | Görev | `task_create`, `plan_create`, `task_list`, `task_get`, `task_tree`, `task_claim`, `task_next`, `task_update`, `task_complete`, `task_fail`, `task_review` |

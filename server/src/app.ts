@@ -94,6 +94,23 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
   app.get('/mcp', noStream);
   app.delete('/mcp', noStream);
 
+  // ------------------------------------------------------------------ Uyandırma (oturumsuz bekleme)
+  // Çalıştırıcı (scripts/run-agent.sh) boştaki agent için model oturumu açmadan burada bekler; oturum ancak
+  // agent'a iş, mesaj ya da istişare düşünce açılır. Yanıt düz metin (bash'te ayrıştırması kolay):
+  //   WAKE\n<oturum talimatına eklenecek not> | TIMEOUT | CLOSED
+  app.post('/api/agent/wake', auth(['worker', 'orchestrator']), async (req, res) => {
+    const room = String(req.body?.room ?? '');
+    const timeoutSec = Math.min(Math.max(Number(req.body?.timeout_sec ?? 300) || 0, 0), 900);
+    const ac = new AbortController();
+    res.on('close', () => ac.abort());
+    try {
+      const r = await svc.waitForWake(req.agent!.name, room, { timeoutMs: timeoutSec * 1000, immediate: !!req.body?.immediate, signal: ac.signal });
+      res.type('text/plain').send(!r ? 'TIMEOUT\n' : r.closed ? 'CLOSED\n' : `WAKE\n${r.note}\n`);
+    } catch (e) {
+      if (!res.headersSent) res.status(e instanceof RoomError ? 400 : 500).type('text/plain').send(`ERROR\n${(e as Error).message}\n`);
+    }
+  });
+
   // ------------------------------------------------------------------ Kayıt (enroll)
   // Uzak makineler paylaşılan kayıt sırrı (ya da admin token'ı) ile kendi agent kimliklerini alır;
   // ekip kurulumu (scripts/team.ts) bunu kullanır. Kaba kuvvete karşı IP başına deneme sınırı vardır.

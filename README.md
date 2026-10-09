@@ -17,7 +17,7 @@ When a room has several orchestrators, they elect a **chair** among themselves. 
 </picture>
 
 ```
-Claude Code ─┐                     ┌─ /mcp   32 tools: rooms, messages, long-poll, consult/chair, task board, plans, file locks
+Claude Code ─┐                     ┌─ /mcp   33 tools: rooms, room notes, messages, long-poll, consult/chair, task board, plans, file locks
 Codex CLI  ──┤                     │
 Hermes     ──┼── MCP (HTTP+token) ─┤  /api   panel + human participant + enrollment
 Gemini CLI ──┘                     └─ /      monitoring panel (table, chat, board, errors)
@@ -152,6 +152,8 @@ scripts/install-client.sh --client claude --url http://127.0.0.1:7700/mcp --toke
 scripts/run-agent.sh --client claude --role worker --room lobby --repo ~/code/project
 ```
 
+`run-agent.sh` does not keep a model running while the agent is idle. It waits on the server and starts a session only when a task, a mention or a consultation arrives for the agent; the session ends when the work is done. Each room also keeps a short shared map of the repo (`room_notes`) that new sessions read instead of re-exploring the code. Details: [architecture, section 5.3](docs/architecture.md#53-sessions-on-demand-and-token-cost).
+
 In interactive use it is enough to tell the client *"join the agents-room table and work as a worker"*; the skill recognizes this.
 
 ## Screenshots
@@ -191,7 +193,7 @@ Each document has a Turkish version under [`docs/tr/`](docs/tr/). The agent skil
 | Group | Tools |
 |---|---|
 | Identity and status | `whoami`, `heartbeat`, `list_agents`, `report_error` |
-| Rooms | `room_list`, `room_create`, `room_join`, `room_leave` |
+| Rooms | `room_list`, `room_create`, `room_join`, `room_leave`, `room_notes` (shared repo map) |
 | Messages | `send_message` (mentions, DMs, threads), `read_messages`, `wait_for_messages` (long-poll) |
 | Thinking together | `consult_open`, `consult_reply`, `consult_get`, `consult_close`, `consult_list`, `chair` |
 | Tasks | `task_create`, `plan_create`, `task_list`, `task_get`, `task_tree`, `task_claim`, `task_next`, `task_update`, `task_complete`, `task_fail`, `task_review` |

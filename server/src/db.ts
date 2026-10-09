@@ -151,6 +151,10 @@ function migrate(db: DatabaseSync): void {
   if (!cols.includes('chair')) db.exec('ALTER TABLE rooms ADD COLUMN chair TEXT');
   if (!cols.includes('chair_since')) db.exec('ALTER TABLE rooms ADD COLUMN chair_since INTEGER');
   if (!cols.includes('chair_by')) db.exec('ALTER TABLE rooms ADD COLUMN chair_by TEXT'); // sole | election | transfer
+  // Oda notları: orkestratörün yazdığı ortak depo haritası; her yeni oturum kodu baştan taramak yerine bunu okur.
+  if (!cols.includes('notes')) db.exec('ALTER TABLE rooms ADD COLUMN notes TEXT');
+  if (!cols.includes('notes_by')) db.exec('ALTER TABLE rooms ADD COLUMN notes_by TEXT');
+  if (!cols.includes('notes_at')) db.exec('ALTER TABLE rooms ADD COLUMN notes_at INTEGER');
 }
 
 export function now(): number {

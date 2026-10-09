@@ -8,6 +8,17 @@ The orchestrator **does not do the work, it delegates**: it splits the goal into
 - `whoami` (your role must be `orchestrator`), `room_join(room)`, `list_agents`.
 - If the room has a `repo` field, that is the shared repo. If not, ask the user or `room_create(name, repo=...)`.
 - Note who is online and their `capabilities`.
+- If the session note lists **Plans you lead**, continue them (`task_tree(id)`, then react to what woke you). Never create a second plan for the same goal.
+
+### 0.2 Repo map (room notes)
+Every worker session starts with an empty context. Without a map, each one re-explores the codebase, which is the largest token cost after idle turns. Write the map once and keep it current:
+- If the room notes are empty or outdated, explore the repo **once** and write them with `room_notes(room, action="set", body=...)`. At most ~150 lines:
+  - layout: the top-level directories and what lives where;
+  - key modules and entry points, with paths;
+  - how to install, build, run and test (exact commands);
+  - conventions (naming, error handling, commit style) and decisions taken in this room.
+- Workers append short facts with `action="append"`. When the notes grow messy, condense them with `action="set"`.
+- After merging a plan that changed the structure, update the map.
 
 ### 0.5 Chair (several orchestrators at one table)
 A room has at most one **chair**: the orchestrator who owns the room's plan. The server manages it:
@@ -34,14 +45,18 @@ A good subtask is:
 - Shared files (package.json, lockfile, schemas, shared types/interfaces) → one early **foundation** task; the others `depends_on` it.
 - A final **integration** task (merge all branches, end-to-end test) — usually the orchestrator itself or an agent with the `review` capability.
 
+- **Self-contained**: the worker starts with a fresh context. Put in the description what it would otherwise have to search for: the files and functions to read first, the interfaces to follow, related task ids.
+- **Same area, same worker**: give follow-up tasks of one area to the agent that did the previous one (`assignee`); it can continue in the same session with the context it already has.
+
 Subtask description template:
 ```
 Goal: ...
 Touch: src/cli/**, test/cli.test.js
 Do not touch: src/store/** (owned by #12)
+Context: read src/store/index.js (Store interface) and src/cli/parse.js first; follow the
+         command pattern in src/cli/commands/list.js; #12 adds Store.remove()
 Acceptance: `npm test` passes; `todo add x && todo list` shows x
 Branch: ar/<room>/t<ID>-cli
-Notes: #12's interface lives in src/store/index.js
 ```
 
 ### 1.5 Consult (think together)
@@ -56,7 +71,7 @@ c = consult_open(room, timeout_sec=180, question=
     docs  README, touches README.md
   Questions: 1) anything missing or risky? 2) a better split? 3) which task do you want?
 )
-loop: consult_get(c.id, wait_sec=55) until "Waiting for" is gone or the deadline passed
+loop: consult_get(c.id, wait_sec=100) until "Waiting for" is gone or the deadline passed
 revise the draft using the answers
 consult_close(c.id, decision="final plan: ... ; changed X thanks to @ela, Y thanks to @kaan")
 ```
@@ -72,15 +87,25 @@ consult_close(c.id, decision="final plan: ... ; changed X thanks to @ela, Y than
 - Post a 3-5 line plan summary to the room and @mention who is expected to do what.
 
 ### 3. Monitor
+Do not idle in a wait loop while workers work: every empty round re-sends your whole context.
+
+**Woken session** (your prompt says `SESSIONS ARE WOKEN ON DEMAND`): after dispatching, or whenever you are only waiting, record the state on the plan and end the session:
 ```
-loop:
-  msgs = wait_for_messages(timeout_sec=45)
-  answer questions (short and decisive)
-  "⏰ lease expired"         → task_review(id, "reassign", assignee=<other>) or leave it open
-  "❌ failed"                → read why; split/clarify the task → task_review(id, "reopen", feedback)
-  "✅ done"                  → step 4
-  "🏁 All subtasks ... are finished" → step 5
-  every ~5 rounds: task_tree(plan_id) for the overall status
+task_update(plan_id, progress="waiting on #12, #13; next: review #11, then merge")
+→ end the session
+```
+The runner wakes you, with the reason, when a task in your plan finishes, fails or expires, when someone @mentions you, when a consultation needs you, or when a human writes in the room. The note also lists the plans you lead and your last progress text.
+
+**Manual session**: loop on `wait_for_messages(timeout_sec=100)`.
+
+What to do with each event:
+```
+answer questions (short and decisive)
+"⏰ lease expired"         → task_review(id, "reassign", assignee=<other>) or leave it open
+"❌ failed"                → read why; split/clarify the task → task_review(id, "reopen", feedback)
+"✅ done"                  → step 4
+"🏁 All subtasks ... are finished" → step 5
+now and then: task_tree(plan_id) for the overall status
 ```
 If no agent is online and tasks are still open, tell the user.
 
@@ -95,6 +120,7 @@ For every finished task:
 - `task_tree(plan_id)` → collect all results.
 - Run the integration test (or read the integration task's result).
 - Final report to the room: what was done, which PRs/merges, what is left open, recommendations.
+- If the structure of the repo changed, update the room notes.
 - `task_complete(plan_id, result=<report>, artifacts=[...PRs])`.
 
 ## Lessons from the pilot

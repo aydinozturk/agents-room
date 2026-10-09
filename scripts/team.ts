@@ -12,6 +12,7 @@
 //                        --orch 0  → orkestratörsüz ekip (görevler panelden ya da başka makinedeki orkestratörden gelir)
 //                        --repo org/proje --git-token <GitHub token> | --ssh-key ~/.ssh/deploy_key
 //                        --foreground  → agent'lar bitene kadar ön planda kal (Docker konteyneri için)
+//                        --sessions 20 → agent başına saatte en fazla model oturumu (0 = sınırsız); boştaki agent oturum açmaz
 //                        --check       → yalnızca denetle (sunucu, sır, repo erişimi, platformlar), hiçbir şey başlatma
 // Ortam değişkenleri: AGENTS_ROOM_BASE (sunucu), AGENTS_ROOM_ENROLL_SECRET, AGENTS_ROOM_GIT_TOKEN (ya da GITHUB_TOKEN),
 //                     AGENTS_ROOM_SSH_KEY, AGENTS_ROOM_WORKSPACES (çalışma alanı kökü)
@@ -341,7 +342,7 @@ const NAME_POOL = [
 ];
 const taken = new Set(info.agents.map((a) => a.name));
 const goal = orchCount ? (opt.goal ?? (await ask('Orkestratöre ilk hedef (boş = panelden yazacağım)', ''))) : '';
-const sessions = Number(opt.sessions ?? 20);
+const sessions = Number(opt.sessions ?? 20); // saatte en fazla oturum (agent başına); 0 = sınırsız
 const roles: { client: Client; role: 'orchestrator' | 'worker' }[] = [];
 for (const k of orchClients) roles.push({ client: k, role: 'orchestrator' });
 for (const k of CLIENTS) for (let i = 1; i <= workers[k]; i++) roles.push({ client: k, role: 'worker' });
@@ -572,13 +573,14 @@ for (const p of plan) {
 
   const log = join(WS, 'logs', `${p.name}.log`);
   const fd = opt.foreground ? -1 : openSync(log, 'a');
-  const args = [join(ROOT, 'scripts', 'run-agent.sh'), '--client', p.client, '--role', p.role, '--room', room, '--repo', dir, '--sessions', String(p.role === 'orchestrator' ? 5 : sessions)];
+  // --sessions: saatte en fazla model oturumu (kaçak döngüye karşı koruma). Boştaki agent oturum açmaz.
+  const args = [join(ROOT, 'scripts', 'run-agent.sh'), '--client', p.client, '--role', p.role, '--room', room, '--repo', dir, '--sessions', String(sessions)];
   if (p.role === 'orchestrator') {
+    // Hedef yoksa orkestratör oturum açmadan bekler; bir insan odaya yazınca uyanır.
+    if (goal) args.push('--goal', `${goal}\n(The human admin may add more instructions in the room.)`);
     args.push(
-      '--goal',
-      goal
-        ? `${goal}\n(The human admin may add more instructions in the room. Talk to humans in Turkish.${orchCount > 1 ? ` There are ${orchCount} orchestrators at this table: elect a chair first; only the chair plans the whole goal.` : ''})`
-        : 'No goal has been given yet. Post a short hello to the room in Turkish, list the workers that are online, and keep looping on wait_for_messages until a human posts a goal. Then (if you are the chair; vote first if a chair election runs) draft a plan, consult the table with consult_open, decide, dispatch with plan_create, monitor, review, merge into main and report back in Turkish. If another orchestrator is chair, support it and run the sub-plans it assigns you. Do not stop just because the room is quiet; keep waiting for at least 60 minutes.',
+      '--context',
+      `Talk to humans in Turkish.${orchCount > 1 ? ` There are ${orchCount} orchestrators at this table: elect a chair first; only the chair plans the whole goal.` : ''}${goal ? '' : ' No goal was given at setup: when a human posts one, plan it (vote first if a chair election runs), consult the table, dispatch, review, merge and report back in Turkish.'}`,
     );
   }
   const child = spawn('bash', args, {

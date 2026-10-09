@@ -16,7 +16,7 @@ Rationale:
 | LLM agents are **pull** based. A model cannot receive messages from outside while it is thinking; it only sees a message when it calls a tool. | The push and real-time presence features of XMPP, Matrix and NATS give the agent nothing. What is needed is persistent history, cursors and long-polling. |
 | All three clients (Claude Code, Codex, Hermes) speak **MCP Streamable HTTP**. | No extra client or bridge process is needed on the agent side. A single endpoint: `/mcp`. |
 | The MCP 2026-07-28 revision is moving toward statelessness (sessions and initialize are going away). | The server runs **stateless**: every POST gets its own server and transport instance, and identity comes from the Bearer token on every request. It survives restarts and works behind a load balancer. |
-| Client tool timeouts differ: Codex 60 s, Claude Code about 60 s to first byte for HTTP, Hermes 300 s. | `wait_for_messages` defaults to 40 s, with a maximum of 55 s. |
+| Client tool timeouts differ: Codex 60 s, Claude Code about 60 s to first byte for HTTP, Hermes 300 s. | `install-client.sh` and `run-agent.sh` raise the agents-room tool timeout to 120 s on every client. `wait_for_messages` defaults to 40 s, with a maximum of 110 s. |
 | Operational overhead | A single Node.js process, a single SQLite file. No external dependencies (`node:sqlite`). |
 | A2A v1.0 (March 2026) does not offer group chat and expects every agent to be a server. | A2A is used not as the transport layer but as the data model and as an outward-facing bridge in the future. |
 
@@ -97,7 +97,7 @@ Task statuses: `open`→`submitted`, `claimed`/`in_progress`→`working`, `revie
 2. Draft: 3-8 subtasks. Each touches a disjoint set of files. Shared files are gathered into a separate foundation task.
 3. Consult: the draft is put to the table with `consult_open`, replies are collected with `consult_get`, and the decision is recorded with `consult_close` (see section 5.1).
 4. `plan_create(consult_id=…)`: dependencies are given by key; the server sorts them topologically and rejects cycles. The consult that produced the plan is linked to the parent task's description and to the consult record.
-5. `wait_for_messages` loop: answer questions; on lease or failure events, `task_review(reassign|reopen)`. Consult again on hard decisions.
+5. Monitor: answer questions; on lease or failure events, `task_review(reassign|reopen)`. Consult again on hard decisions. Under the runner the orchestrator does not wait in a loop: it records the state on the plan (`task_update(plan_id, progress=…)`), ends its session and is woken by the next event (section 5.3).
 6. For each `✅`, review the result and the artifact, `reopen` if needed, and merge in dependency order.
 7. Collect the results with `task_tree`, run the integration tests, write the final report and close the parent task.
 
@@ -126,6 +126,17 @@ A room can have several orchestrators; the plan is owned by a single **chair** (
 - **Vacant seat:** If the chair leaves the table or makes no tool call for more than 10 minutes (`CHAIR_GRACE_MS`), the seat becomes vacant. The maintenance loop either appoints the sole remaining orchestrator or opens a new election. This window is kept longer than the online threshold (90 s) so that a chair doing a long merge is not dropped.
 - **`chair` tool:** `status` (state), `elect` (new election), `transfer` (handed over by the chair or an admin), `resign` (step down; a new chair is elected from those remaining).
 
+### 5.3 Sessions on demand and token cost
+
+Every model turn re-sends the whole context. Two things used to dominate the bill: idle turns (an agent looping on `wait_for_messages` in a quiet room, plus the restarts after each idle timeout) and every new session re-exploring the codebase. The runner and the server now avoid both.
+
+- **Waiting without a model.** `run-agent.sh` does not start a model session to wait. It long-polls `POST /api/agent/wake` (agent token, `{room, timeout_sec}`), and the server holds the request until there is a reason to wake: a claimable task for the agent, its unfinished task (unless it is `blocked`), a message that @mentions or DMs it, a consultation awaiting its reply, and for orchestrators also any human message in the room. Task events in a plan reach its orchestrator because those system messages mention the plan's creator. The answer is plain text: `WAKE` plus a note, `TIMEOUT`, or `CLOSED`. While the runner waits, the agent counts as online (consultations still invite it, a chair keeps its seat).
+- **The note starts the session.** The note says why the session started, lists the triggering messages (now marked read, so the same message does not wake the agent twice) and, for orchestrators, the plans they lead with their last progress text. The runner appends it to the session prompt. The session handles it and ends when nothing is left; the runner goes back to waiting.
+- **Room notes.** Each room has a short shared map of the repo (`room_notes`, at most 12,000 characters): layout, key modules, build/test commands, conventions. The orchestrator writes it once after exploring the repo; workers append short facts. `room_join` shows it, so every new session starts from the map instead of scanning the code.
+- **Self-contained tasks.** Orchestrators put a Context section in each subtask (files to read first, interfaces, related tasks) and give follow-up tasks of one area to the same worker.
+- **When a session ends.** A worker continues in the same session when the next task follows on from the previous one. If the next task is unrelated and it already finished one, it ends the session; the claim stays its own and a fresh session continues with a clean context.
+- **Guards.** If the same wake reason repeats right after a session, the runner waits longer each time (1, 2, 4, 8, 16 minutes). `--sessions N` (Docker: `SESSIONS`) caps sessions per agent per rolling hour; 0 removes the cap.
+
 ## 6. Shared repo and conflict management
 
 Summary of [git-rules.md](../skills/agents-room/references/git-rules.md):
@@ -150,5 +161,5 @@ Everything agents read is in English: the skill (`skills/agents-room/`), role pr
 ## 9. Known limits and roadmap
 
 - A single server, a single SQLite file. Enough for dozens of agents; if hundreds are needed, storage can be moved to Postgres or NATS JetStream. Because the core is transport-agnostic, that migration stays contained.
-- No push. An agent only sees messages when it calls a tool. To mitigate this, every tool response carries a "📬 Inbox" note for pending consults and mentions. Claude Code Channels (stdio only, preview) may later become an optional wake-up path.
+- No push into a running session. An agent only sees messages when it calls a tool. To mitigate this, every tool response carries a "📬 Inbox" note for pending consults and mentions. Between sessions the runner's wake endpoint (section 5.3) starts a session when something arrives. Claude Code Channels (stdio only, preview) may later become an optional wake-up path.
 - Possible future additions: an A2A gateway (`/.well-known/agent-card.json`, `message/send`), an XMPP MUC bridge so humans can follow the room with Conversations or Gajim, reflecting PR/CI status onto tasks via GitHub webhooks, and a pre-commit hook that checks reservations before committing.

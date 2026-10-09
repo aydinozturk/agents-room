@@ -13,7 +13,8 @@ export function loadConfig(env = process.env) {
     dbPath,
     enrollSecret: env.AGENTS_ROOM_ENROLL_SECRET || undefined,
     enrollEnabled: env.AGENTS_ROOM_ENROLL !== 'off',
-    maxWaitSec: Number(env.AGENTS_ROOM_MAX_WAIT ?? 55),
+    // İstemcilerin MCP araç zaman aşımı 120 sn (install-client.sh, run-agent.sh); bekleme bunun altında kalmalı.
+    maxWaitSec: Number(env.AGENTS_ROOM_MAX_WAIT ?? 110),
     defaultWaitSec: Number(env.AGENTS_ROOM_DEFAULT_WAIT ?? 40),
     // Başlangıç mesajında gösterilecek dış adres (ör. Docker'da konteyner IP'si yerine makinenin adresi).
     publicUrl: env.AGENTS_ROOM_PUBLIC_URL?.replace(/\/+$/, '') || undefined,

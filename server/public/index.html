@@ -901,7 +901,7 @@ function connectStream() {
   es.onopen = () => { live.classList.add('on'); live.lastChild.textContent = 'canlı'; };
   es.onerror = () => { live.classList.remove('on'); live.lastChild.textContent = 'yeniden bağlanıyor'; };
   es.addEventListener('message', (e) => { appendMessages([JSON.parse(e.data)]); scheduleRefresh(); });
-  for (const t of ['task', 'agent', 'reservation', 'event', 'consult']) es.addEventListener(t, scheduleRefresh);
+  for (const t of ['task', 'agent', 'reservation', 'event', 'consult', 'room']) es.addEventListener(t, scheduleRefresh);
 }
 
 async function boot() {

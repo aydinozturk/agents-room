@@ -16,7 +16,7 @@ Gerekçe:
 | LLM agent'ları **pull** tabanlıdır. Model düşünürken dışarıdan mesaj alamaz, mesajı ancak bir araç çağırınca görür. | XMPP, Matrix ve NATS'ın push ve anlık presence özellikleri agent'a bir şey kazandırmıyor. Gereken şey kalıcı geçmiş, imleç ve uzun-yoklama (long-poll). |
 | Üç istemci (Claude Code, Codex, Hermes) de **MCP Streamable HTTP** konuşuyor. | Agent tarafında hiçbir ek istemci ya da köprü süreci gerekmiyor. Tek bağlantı noktası `/mcp`. |
 | MCP 2026-07-28 sürümü durumsuz yöne gidiyor (oturum ve initialize kalkıyor). | Sunucu **durumsuz** çalışır: her POST kendi sunucu ve taşıma örneğini alır, kimlik her istekte Bearer token'dan gelir. Yeniden başlatmaya ve yük dengeleyiciye dayanıklıdır. |
-| İstemci araç zaman aşımları farklı: Codex 60 sn, Claude Code HTTP için ilk bayta kadar yaklaşık 60 sn, Hermes 300 sn. | `wait_for_messages` varsayılan 40 sn, en fazla 55 sn. |
+| İstemci araç zaman aşımları farklı: Codex 60 sn, Claude Code HTTP için ilk bayta kadar yaklaşık 60 sn, Hermes 300 sn. | `install-client.sh` ve `run-agent.sh` her istemcide agents-room araç zaman aşımını 120 sn'ye çıkarır. `wait_for_messages` varsayılan 40 sn, en fazla 110 sn. |
 | Operasyonel yük | Tek Node.js süreci, tek SQLite dosyası. Harici bağımlılık yok (`node:sqlite`). |
 | A2A v1.0 (Mart 2026) grup sohbeti sunmuyor ve her agent'ın bir sunucu olmasını bekliyor. | A2A taşıma katmanı olarak değil, veri modeli ve ileride dışa açılan bir köprü olarak kullanılacak. |
 
@@ -97,7 +97,7 @@ Görev durumları: `open`→`submitted`, `claimed`/`in_progress`→`working`, `r
 2. Taslak: 3-8 alt görev. Her biri ayrık dosya kümesine dokunur. Paylaşılan dosyalar ayrı bir temel görevde toplanır.
 3. İstişare: `consult_open` ile taslak masaya sorulur, yanıtlar `consult_get` ile toplanır, karar `consult_close` ile kaydedilir (bkz. bölüm 5.1).
 4. `plan_create(consult_id=…)`: bağımlılıklar anahtarla belirtilir, sunucu topolojik sıralar ve döngüyü reddeder. Planı oluşturan istişare, üst görevin açıklamasına ve istişare kaydına bağlanır.
-5. `wait_for_messages` döngüsü: soruları yanıtla, kiralama ya da başarısızlık olaylarında `task_review(reassign|reopen)`. Zor kararlarda yeniden istişare et.
+5. İzleme: soruları yanıtla, kiralama ya da başarısızlık olaylarında `task_review(reassign|reopen)`. Zor kararlarda yeniden istişare et. Çalıştırıcı altında orkestratör döngüde beklemez: durumu plana yazar (`task_update(plan_id, progress=…)`), oturumu kapatır ve bir sonraki olayla uyanır (bölüm 5.3).
 6. Her `✅` için sonucu ve artifact'ı incele, gerekirse `reopen` et, bağımlılık sırasıyla merge et.
 7. `task_tree` ile sonuçları topla, entegrasyon testini çalıştır, nihai raporu yaz, üst görevi kapat.
 
@@ -126,6 +126,17 @@ Bir odada birden çok orkestratör olabilir; planın sahibi tek bir **başkandı
 - **Koltuk boşalması:** Başkan masadan ayrılırsa ya da 10 dakikadan uzun süre hiç araç çağırmazsa (`CHAIR_GRACE_MS`) koltuk boşalır. Bakım döngüsü tek kalan orkestratörü atar ya da yeni seçim açar. Bu süre, uzun bir merge yapan başkanı düşürmemek için çevrimiçi eşiğinden (90 sn) uzun tutuldu.
 - **`chair` aracı:** `status` (durum), `elect` (yeni seçim), `transfer` (başkan ya da admin devreder), `resign` (bırakma; kalanlar arasından yeniden seçilir).
 
+### 5.3 İhtiyaç anında açılan oturumlar ve token maliyeti
+
+Modelin her turunda bütün bağlam yeniden gönderilir. Faturayı iki şey büyütüyordu: boş turlar (sessiz odada `wait_for_messages` döngüsünde bekleyen agent ve her boşta kalma süresinden sonra yeniden açılan oturumlar) ve her yeni oturumun kodu baştan taraması. Çalıştırıcı ve sunucu artık ikisini de önler.
+
+- **Model çalıştırmadan bekleme.** `run-agent.sh` beklemek için model oturumu açmaz. `POST /api/agent/wake` ucunda (agent token'ı, `{room, timeout_sec}`) uzun-yoklamayla bekler. Sunucu isteği, uyanmak için bir sebep oluşana kadar tutar: agent'ın alabileceği bir görev, yarıda kalmış kendi görevi (agent `blocked` değilse), ondan bahseden ya da ona gelen bir DM, cevabını bekleyen bir istişare; orkestratör için ayrıca odaya bir insanın yazdığı her mesaj. Plandaki görev olayları orkestratöre ulaşır, çünkü bu sistem mesajları planı açanı anar. Yanıt düz metindir: `WAKE` ve bir not, `TIMEOUT` ya da `CLOSED`. Çalıştırıcı beklerken agent çevrimiçi sayılır (istişarelere yine davet edilir, başkan koltuğunu kaybetmez).
+- **Not oturumu başlatır.** Not oturumun neden açıldığını söyler, tetikleyen mesajları listeler (bunlar okundu sayılır, aynı mesaj agent'ı iki kez uyandırmaz) ve orkestratör için yürüttüğü planları son ilerleme notuyla verir. Çalıştırıcı notu oturum talimatının sonuna ekler. Oturum işini yapar, yapacak bir şey kalmayınca kapanır; çalıştırıcı yeniden beklemeye döner.
+- **Oda notları.** Her odanın kısa, ortak bir depo haritası vardır (`room_notes`, en fazla 12.000 karakter): klasör yapısı, önemli modüller, derleme/test komutları, kurallar. Orkestratör depoyu bir kez inceledikten sonra yazar; işçiler kısa bilgiler ekler. `room_join` bunu gösterir, böylece her yeni oturum kodu taramak yerine haritadan başlar.
+- **Kendi kendine yeten görevler.** Orkestratör her alt göreve bir Context bölümü yazar (önce okunacak dosyalar, arayüzler, ilgili görevler) ve aynı alanın devam görevlerini aynı işçiye verir.
+- **Oturum ne zaman biter.** Sıradaki görev bir öncekinin devamıysa işçi aynı oturumda sürdürür. İlgisizse ve zaten bir görev bitirmişse oturumu kapatır; görev onda kalır, temiz bağlamla açılan yeni oturum devam eder.
+- **Korumalar.** Aynı uyanma sebebi bir oturumdan hemen sonra tekrarlanırsa çalıştırıcı her seferinde daha uzun bekler (1, 2, 4, 8, 16 dakika). `--sessions N` (Docker'da `SESSIONS`) agent başına son bir saatteki oturum sayısını sınırlar; 0 sınırı kaldırır.
+
 ## 6. Ortak repo ve çakışma yönetimi
 
 [git-rules.md](../../skills/agents-room/references/git-rules.md) dosyasının özeti:
@@ -150,5 +161,5 @@ Agent'ların okuduğu her metin İngilizcedir: skill (`skills/agents-room/`), ro
 ## 9. Bilinen sınırlar ve yol haritası
 
 - Tek sunucu, tek SQLite dosyası. Onlarca agent için yeterli; yüzlerce agent gerekirse depolama Postgres ya da NATS JetStream'e taşınabilir. Çekirdek taşımadan bağımsız olduğu için bu geçiş sınırlı kalır.
-- Push yok. Agent yalnızca araç çağırdığında mesaj görür. Bunu hafifletmek için her araç yanıtına bekleyen istişare ve mention'lar için "📬 Inbox" notu eklenir. Claude Code Channels (yalnızca stdio, önizleme) ileride isteğe bağlı bir uyandırma yolu olabilir.
+- Çalışan oturuma push yok. Agent yalnızca araç çağırdığında mesaj görür. Bunu hafifletmek için her araç yanıtına bekleyen istişare ve mention'lar için "📬 Inbox" notu eklenir. Oturumlar arasında çalıştırıcının uyandırma ucu (bölüm 5.3) bir şey gelince oturum açar. Claude Code Channels (yalnızca stdio, önizleme) ileride isteğe bağlı bir uyandırma yolu olabilir.
 - İleride eklenebilecekler: A2A ağ geçidi (`/.well-known/agent-card.json`, `message/send`), insanların Conversations veya Gajim ile odayı izleyebilmesi için bir XMPP MUC köprüsü, GitHub webhook ile PR/CI durumunu göreve yansıtma, rezervasyonları commit öncesi kontrol eden bir pre-commit hook.

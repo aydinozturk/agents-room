@@ -446,3 +446,75 @@ test('başkan seçimi süresi dolunca: oy yoksa masaya ilk gelen kazanır; isti�
   assert.equal(nudges.length, 1);
   assert.match(nudges[0]!.body, /silent: w1/);
 });
+
+test('oda notları: orkestratör yazar, işçi kısa bilgi ekler, room_join gösterir, boyut sınırı', async () => {
+  svc.createRoom('notlar', null, null, 'admin');
+  const set = await call('orch', 'room_notes', { room: 'notlar', action: 'set', body: '# Harita\n- src/api: HTTP katmanı\n- test: npm test' });
+  assert.equal(set.isError, false, set.text);
+  const denied = await call('w1', 'room_notes', { room: 'notlar', action: 'set', body: 'her şeyi sil' });
+  assert.equal(denied.isError, true);
+  const app = await call('w1', 'room_notes', { room: 'notlar', action: 'append', body: 'e2e testleri için önce npm run build' });
+  assert.equal(app.isError, false, app.text);
+  const got = await call('w2', 'room_notes', { room: 'notlar' });
+  assert.match(got.text, /src\/api: HTTP katmanı/);
+  assert.match(got.text, /- e2e testleri için önce npm run build \(w1\)$/);
+  const join = await call('w2', 'room_join', { room: 'notlar' });
+  assert.match(join.text, /room notes[\s\S]*src\/api: HTTP katmanı/);
+  assert.equal(svc.getRoom('notlar')!.has_notes, true);
+  assert.equal('notes' in svc.getRoom('notlar')!, false);
+  const big = await call('orch', 'room_notes', { room: 'notlar', action: 'set', body: 'x'.repeat(13_000) });
+  assert.equal(big.isError, true);
+  assert.match(big.text, /max 12000/);
+});
+
+test('uyandırma: model oturumu olmadan bekler; görev, bahsetme, insan mesajı ve kapanış uyandırır', async () => {
+  tokens.uw = svc.createAgent({ name: 'uw', kind: 'claude-code', role: 'worker', capabilities: ['typescript'] }).token;
+  tokens.uo = svc.createAgent({ name: 'uo', kind: 'claude-code', role: 'orchestrator' }).token;
+  svc.createRoom('uyku', null, null, 'admin');
+  const wake = (name: string, body: Record<string, unknown>) =>
+    fetch(base + '/api/agent/wake', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokens[name]}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ room: 'uyku', ...body }),
+    }).then(async (r) => ({ status: r.status, text: await r.text() }));
+
+  assert.equal((await fetch(base + '/api/agent/wake', { method: 'POST' })).status, 401);
+  assert.equal((await wake('admin', { timeout_sec: 0 })).status, 403);
+
+  // İlk çağrı odaya katılır; yapılacak bir şey yoksa model oturumu açılmaz.
+  assert.equal((await wake('uw', { timeout_sec: 0 })).text, 'TIMEOUT\n');
+  assert.ok(svc.roomsOf('uw').includes('uyku'));
+  assert.match(svc.getAgent('uw')!.activity ?? '', /no model session/);
+
+  // Bekleyen işçi, alınabilir bir görev açılınca uyanır.
+  const pending = wake('uw', { timeout_sec: 5 });
+  await new Promise((r) => setTimeout(r, 100));
+  const t = svc.createTask('admin', { room: 'uyku', title: 'API ucu', capabilities: ['typescript'] });
+  const w1 = await pending;
+  assert.match(w1.text, /^WAKE\n/);
+  assert.match(w1.text, new RegExp(`Claimable tasks for you: #${t.id} "API ucu"`));
+
+  // Alınmış ama bitmemiş görev (oturum kapandı/çöktü) uyandırır; "blocked" işçi ise yalnızca mesajla uyanır.
+  svc.claim('uw', t.id);
+  assert.match((await wake('uw', { timeout_sec: 0 })).text, new RegExp(`unfinished tasks: #${t.id}`));
+  svc.setStatus('uw', 'blocked', 'soru sordu');
+  assert.equal((await wake('uw', { timeout_sec: 0 })).text, 'TIMEOUT\n');
+  svc.send('uo', { room: 'uyku', body: '@uw arayüz src/api/index.ts içinde' });
+  const w2 = await wake('uw', { timeout_sec: 0 });
+  assert.match(w2.text, /Messages for you[\s\S]*<uo> @uw arayüz src\/api\/index.ts içinde/);
+  // Tetikleyen mesaj okundu sayıldı: ikinci bir oturum açtırmaz.
+  assert.equal((await wake('uw', { timeout_sec: 0 })).text, 'TIMEOUT\n');
+
+  // İnsan odaya yazınca (bahsetmeden) orkestratör uyanır, işçi uyanmaz.
+  svc.complete('uw', t.id, { result: 'tamam' });
+  svc.setStatus('uw', 'idle');
+  await wake('uo', { timeout_sec: 0 });
+  svc.send('admin', { room: 'uyku', body: 'Hedef: giriş sayfası' });
+  assert.equal((await wake('uw', { timeout_sec: 0 })).text, 'TIMEOUT\n');
+  assert.match((await wake('uo', { timeout_sec: 0 })).text, /<admin> Hedef: giriş sayfası/);
+
+  // immediate: sebep olmasa da oturum açılır (hedefle başlayan orkestratör); oda kapanınca CLOSED.
+  assert.match((await wake('uo', { timeout_sec: 0, immediate: true })).text, /^WAKE\nWHY THIS SESSION STARTED: session start/);
+  svc.closeRoom('uyku', 'admin');
+  assert.equal((await wake('uw', { timeout_sec: 0 })).text, 'CLOSED\n');
+});

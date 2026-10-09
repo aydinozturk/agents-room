@@ -70,7 +70,8 @@ function main() {
     console.log('');
   });
   // Uzun-yoklama isteklerinin kesilmemesi için zaman aşımları max bekleme süresinden büyük olmalı.
-  server.requestTimeout = (cfg.maxWaitSec + 30) * 1000;
+  // Uyandırma ucu (/api/agent/wake) en çok 900 sn bekler.
+  server.requestTimeout = (Math.max(cfg.maxWaitSec, 900) + 30) * 1000;
   const stop = () => {
     clearInterval(sweeper);
     server.close(() => process.exit(0));

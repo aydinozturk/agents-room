@@ -107,6 +107,27 @@ export interface ConsultReply {
 
 export class RoomError extends Error {}
 
+/** Mesajları agent'a gösterilecek tek satırlık biçime çevirir. */
+export function fmtMessages(msgs: { id: number; room: string; sender: string; kind: string; body: string; recipient: string | null; task_id: number | null; created_at: number }[]): string {
+  if (!msgs.length) return '(no new messages)';
+  return msgs
+    .map((m) => {
+      const t = new Date(m.created_at).toISOString().slice(11, 19);
+      const dm = m.recipient ? ` →@${m.recipient}` : '';
+      const task = m.task_id ? ` [#${m.task_id}]` : '';
+      return `[${m.id}] ${t} #${m.room} <${m.sender}${dm}>${task} ${m.body}`;
+    })
+    .join('\n');
+}
+
+/** Uyandırma sonucu: oturumsuz bekleyen agent'ın yeni bir model oturumu açması için sebep(ler). */
+export interface WakeResult {
+  closed: boolean;
+  reasons: string[];
+  /** Oturum talimatına eklenecek metin (İngilizce): neden uyandığı ve ilgili bağlam. */
+  note: string;
+}
+
 const AGENT_JSON = ['capabilities'];
 const MSG_JSON = ['mentions'];
 const TASK_JSON = ['capabilities', 'depends_on', 'artifacts'];
@@ -114,6 +135,7 @@ const CONSULT_JSON = ['options', 'invitees'];
 const ACTIVE_STATUSES: TaskStatus[] = ['claimed', 'in_progress'];
 const FINAL_STATUSES: TaskStatus[] = ['done', 'failed', 'cancelled'];
 
+export const NOTES_MAX = 12_000; // oda notları kısa bir harita olmalı: her oturum bunu bağlamına alır
 export const ONLINE_MS = 90_000; // bu süre içinde görülen agent "çevrimiçi"
 export const DEFAULT_LEASE_MIN = 30;
 export const CHAIR_GRACE_MS = 10 * 60_000; // başkan bu kadar sessiz kalırsa koltuk boşalır (uzun iş yapan orkestratörü düşürmemek için ONLINE_MS'ten uzun)
@@ -177,7 +199,7 @@ export function extractMentions(body: string): string[] {
 }
 
 export interface BusEvent {
-  type: 'message' | 'task' | 'agent' | 'reservation' | 'event' | 'consult';
+  type: 'message' | 'task' | 'agent' | 'reservation' | 'event' | 'consult' | 'room';
   room?: string;
   data: unknown;
 }
@@ -331,7 +353,41 @@ export class RoomService {
   }
 
   getRoom(name: string): Record<string, unknown> | null {
-    return (this.db.prepare('SELECT * FROM rooms WHERE name = ?').get(name) as Record<string, unknown>) ?? null;
+    const r = this.db.prepare('SELECT * FROM rooms WHERE name = ?').get(name) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    // Notlar uzun olabilir: oda kaydında yalnızca var olup olmadığı görünür, metin getNotes ile okunur.
+    const { notes, notes_by: _by, notes_at: _at, ...rest } = r;
+    return { ...rest, has_notes: !!notes };
+  }
+
+  // ---------------------------------------------------------------- oda notları
+  /** Odanın ortak notları (depo haritası): yeni oturumlar kodu baştan taramak yerine bunu okur. */
+  getNotes(room: string): { notes: string; by: string | null; at: number | null } {
+    this.requireRoom(room, false);
+    const r = this.db.prepare('SELECT notes, notes_by, notes_at FROM rooms WHERE name = ?').get(room) as
+      | { notes: string | null; notes_by: string | null; notes_at: number | null }
+      | undefined;
+    return { notes: r?.notes ?? '', by: r?.notes_by ?? null, at: r?.notes_at ?? null };
+  }
+
+  /** set: notların tamamını değiştirir (orkestratör/admin); append: sona kısa bir bilgi ekler (herkes). */
+  writeNotes(agent: string, room: string, action: 'set' | 'append', body: string): { notes: string; by: string | null; at: number | null } {
+    this.requireRoom(room);
+    const a = this.getAgent(agent);
+    if (action === 'set' && a?.role !== 'orchestrator' && a?.role !== 'admin') {
+      throw new RoomError('Only orchestrators replace the room notes; use action="append" to add a short fact');
+    }
+    const text = body.trim();
+    if (!text) throw new RoomError('Notes body is empty');
+    const cur = this.getNotes(room).notes;
+    const next = action === 'set' ? text : `${cur.trimEnd()}${cur.trim() ? '\n' : ''}- ${text.replace(/^-\s*/, '')} (${agent})`;
+    if (next.length > NOTES_MAX) {
+      throw new RoomError(`Room notes would be ${next.length} chars (max ${NOTES_MAX}). Keep them a short map; an orchestrator can condense them with action="set"`);
+    }
+    this.db.prepare('UPDATE rooms SET notes = ?, notes_by = ?, notes_at = ? WHERE name = ?').run(next, agent, now(), room);
+    this.log('room.notes', agent, { room, action, chars: next.length });
+    this.emit({ type: 'room', room, data: this.getRoom(room) });
+    return this.getNotes(room);
   }
 
   listRooms(opts: { includeClosed?: boolean } = {}): unknown[] {
@@ -570,6 +626,131 @@ export class RoomService {
       };
       const onAbort = () => finish([]);
       const timer = setTimeout(() => finish([]), opts.timeoutMs);
+      this.bus.on('event', onEvent);
+      opts.signal?.addEventListener('abort', onAbort);
+    });
+  }
+
+  // ---------------------------------------------------------------- uyandırma (oturumsuz bekleme)
+  /**
+   * Boşta bekleyen agent'ın model oturumu açması gerekiyor mu? Model hiç çalışmadan sunucuda bakılır:
+   * agent'a düşen/alınabilir görev, ondan bahseden mesaj ya da DM, cevap bekleyen istişare;
+   * orkestratör için ayrıca insanların odaya yazdıkları. Tetikleyen mesajlar okundu sayılır ve
+   * notta verilir; böylece aynı mesaj ikinci bir oturum açtırmaz.
+   */
+  wakeCheck(agentName: string, room: string, opts: { immediate?: boolean } = {}): WakeResult | null {
+    const agent = this.getAgent(agentName);
+    if (!agent) throw new RoomError(`Agent not found: ${agentName}`);
+    if (!this.getRoom(room)) throw new RoomError(`Room not found: ${room}`);
+    if (this.isClosed(room)) return { closed: true, reasons: ['room closed'], note: '' };
+    const orch = agent.role === 'orchestrator' || agent.role === 'admin';
+    // İlk uyandırmada odaya katıl (imleç sona çekilir: eski mesajlar uyandırmaz).
+    if (!this.roomsOf(agentName).includes(room)) this.join(agentName, room);
+
+    const reasons: string[] = [];
+    const lines: string[] = [];
+
+    const consults = this.pendingConsults(agentName).filter((c) => c.room === room);
+    if (consults.length) {
+      reasons.push('consultation');
+      lines.push(`Consultations await your reply: ${consults.map((c) => `C${c.id}${c.kind === 'election' ? ' (chair election)' : ''} by @${c.asker}`).join(', ')} → consult_get(id), then consult_reply(id, ...).`);
+    }
+
+    const unread = this.unread(agentName, { rooms: [room], limit: 200 });
+    const isHuman = (name: string) => {
+      const a = this.getAgent(name);
+      return a?.kind === 'human' || a?.role === 'admin';
+    };
+    const triggers = unread.filter(
+      (m) => m.mentions.includes(agentName) || m.recipient === agentName || (orch && m.sender !== 'system' && isHuman(m.sender)),
+    );
+    if (triggers.length) {
+      reasons.push('message');
+      lines.push(`Messages for you (already marked read; read_messages(room) shows the full history):\n${fmtMessages(triggers.slice(-30))}`);
+    }
+
+    const open = this.listTasks({ room, status: ['open'], limit: 500 });
+    const claimable = open.filter((t) => this.claimable(t, agent).ok && (!orch || t.assignee === agentName));
+    if (claimable.length) {
+      reasons.push('task');
+      lines.push(`Claimable tasks for you: ${claimable.slice(0, 5).map((t) => `#${t.id} "${t.title}"${t.assignee ? ' (assigned to you)' : ''}`).join(', ')} → task_next(room="${room}").`);
+    }
+
+    // İşçinin yarıda kalmış görevi (oturum bitti/çöktü). "blocked" bekleyen işçi ancak bir mesajla uyanır.
+    if (!orch && agent.status !== 'blocked') {
+      const mine = this.listTasks({ room, assignee: agentName, status: ACTIVE_STATUSES, limit: 20 });
+      if (mine.length) {
+        reasons.push('active task');
+        lines.push(`You hold unfinished tasks: ${mine.map((t) => `#${t.id} "${t.title}" (${t.status}${t.progress ? `, progress: ${t.progress.slice(0, 200)}` : ''})`).join(', ')} → task_get(id) and continue.`);
+      }
+    }
+
+    if (!reasons.length && !opts.immediate) return null;
+
+    // Bağlam (uyandırma sebebi değil): orkestratörün yürüttüğü planlar.
+    if (orch) {
+      const plans = this.listTasks({ room, assignee: agentName, status: ['in_progress', 'claimed'], limit: 20 }).filter(
+        (t) => this.listTasks({ parent_id: t.id, limit: 1 }).length > 0,
+      );
+      if (plans.length) {
+        lines.push(`Plans you lead (continue them; do not create a new plan for the same goal): ${plans.map((t) => `#${t.id} "${t.title}"${t.progress ? ` — your last note: ${t.progress.slice(0, 300)}` : ''}`).join('; ')}. task_tree(id) shows their state.`);
+      }
+    }
+    if (unread.length) this.markRead(agentName, room, Math.max(...unread.map((m) => m.id)));
+    return {
+      closed: false,
+      reasons,
+      note: `WHY THIS SESSION STARTED: ${reasons.length ? reasons.join(', ') : 'session start'}.\n${lines.join('\n')}`.trim(),
+    };
+  }
+
+  /** Uyandırma sebebi oluşana ya da süre dolana kadar bekler; bekleyen agent çevrimiçi sayılır. */
+  async waitForWake(
+    agentName: string,
+    room: string,
+    opts: { timeoutMs: number; immediate?: boolean; signal?: AbortSignal },
+  ): Promise<WakeResult | null> {
+    this.touch(agentName);
+    const a = this.getAgent(agentName)!;
+    if (a.status !== 'blocked') this.setStatus(agentName, 'idle', 'waiting for work (no model session running)');
+    const first = this.wakeCheck(agentName, room, { immediate: opts.immediate });
+    if (first || opts.timeoutMs <= 0) return first;
+    return new Promise<WakeResult | null>((resolve) => {
+      let done = false;
+      let pending = false;
+      const finish = (v: WakeResult | null) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        clearInterval(tick);
+        this.bus.off('event', onEvent);
+        opts.signal?.removeEventListener('abort', onAbort);
+        resolve(v);
+      };
+      const check = () => {
+        if (done) return;
+        try {
+          const r = this.wakeCheck(agentName, room);
+          if (r) finish(r);
+        } catch {
+          finish(null);
+        }
+      };
+      const onEvent = (ev: BusEvent) => {
+        if (ev.type === 'agent' || ev.type === 'event' || ev.type === 'reservation' || pending) return;
+        pending = true;
+        setImmediate(() => {
+          pending = false;
+          check();
+        });
+      };
+      const onAbort = () => finish(null);
+      // Bekleme boyunca agent çevrimiçi görünür (istişarelere davet edilir, başkanlığı düşmez).
+      const tick = setInterval(() => {
+        this.touch(agentName);
+        check();
+      }, 20_000);
+      const timer = setTimeout(() => finish(null), opts.timeoutMs);
       this.bus.on('event', onEvent);
       opts.signal?.addEventListener('abort', onAbort);
     });

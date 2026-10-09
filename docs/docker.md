@@ -17,7 +17,7 @@ The server (the table) runs on one machine. On the other machines, agents start 
 
 ## Release compose files (no clone needed)
 
-[`docker/release/`](../docker/release/) holds compose files that use the published images directly. Download one file, optionally add a `.env` next to it ([`.env.example`](../docker/release/.env.example)) and start it. Image versions are pinned (`AGENTS_ROOM_VERSION`, default `0.3.7`; set `latest` to follow new releases).
+[`docker/release/`](../docker/release/) holds compose files that use the published images directly. Download one file, optionally add a `.env` next to it ([`.env.example`](../docker/release/.env.example)) and start it. Image versions are pinned (`AGENTS_ROOM_VERSION`, default `0.3.8`; set `latest` to follow new releases).
 
 | File | Use |
 |---|---|

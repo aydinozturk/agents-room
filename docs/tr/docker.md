@@ -17,7 +17,7 @@ Sunucu (masa) bir makinede çalışır. Diğer makinelerde agent'lar Docker kont
 
 ## Hazır compose dosyaları (klonlamadan)
 
-[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.7`; yeni sürümleri izlemek için `latest`).
+[`docker/release/`](../../docker/release/) klasöründeki compose dosyaları yayımlanmış imajları doğrudan kullanır. Tek bir dosyayı indirin, isterseniz yanına bir `.env` koyun ([`.env.example`](../../docker/release/.env.example)) ve başlatın. İmaj sürümleri sabittir (`AGENTS_ROOM_VERSION`, varsayılan `0.3.8`; yeni sürümleri izlemek için `latest`).
 
 | Dosya | Kullanım |
 |---|---|

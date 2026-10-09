@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -18,6 +18,7 @@ import {
   redact,
   seedEmptyRepo,
   syncCache,
+  workspaceReady,
   type GitAuth,
 } from '../../scripts/git-auth.ts';
 
@@ -123,6 +124,39 @@ test('büyük repo: makine başına tek önbellek, agent kopyaları oradan; orig
   const bad = await syncCache(url, join(root, 'ws', 'yok.git'), { kind: 'token', token: 'yanlis-anahtar' });
   assert.equal(bad.ok, false);
   assert.doesNotMatch(bad.error!, /yanlis-anahtar/);
+});
+
+test('klon klasör adı değiştirmeden açılır; yarım kalan kopya baştan açılır, tamamı korunur', async () => {
+  const url = `${base}/proje.git`;
+  const auth: GitAuth = { kind: 'token', token: TOKEN };
+  const ws = join(root, 'ws2');
+  const cache = join(ws, '.repo-cache.git');
+  mkdirSync(ws, { recursive: true });
+  assert.equal((await syncCache(url, cache, auth)).ok, true);
+  assert.equal(existsSync(join(ws, '..repo-cache.git.cloning')), false);
+
+  // Konteyner klon sırasında durdurulmuş gibi: yarım klasör + işaret.
+  const dir = join(ws, 'mira');
+  mkdirSync(join(dir, 'yarim'), { recursive: true });
+  writeFileSync(join(ws, '.mira.cloning'), '');
+  assert.equal(workspaceReady(dir), false);
+  const c = await cloneFromCache(url, cache, dir, auth);
+  assert.equal(c.ok, true, c.error);
+  assert.equal(workspaceReady(dir), true);
+  assert.equal(existsSync(join(dir, 'yarim')), false);
+  assert.equal(spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout.trim(), url);
+
+  // Tamamlanmış kopyanın (agent'ın işi) üzerine yazılmaz.
+  writeFileSync(join(dir, 'is.txt'), 'x\n');
+  const again = await cloneFromCache(url, cache, dir, auth);
+  assert.equal(again.ok, false);
+  assert.equal(readFileSync(join(dir, 'is.txt'), 'utf8'), 'x\n');
+
+  // Başarısız klon yarım klasör ya da işaret bırakmaz.
+  const bad = await cloneFromCache(url, join(ws, 'yok.git'), join(ws, 'ela'), auth);
+  assert.equal(bad.ok, false);
+  assert.equal(existsSync(join(ws, 'ela')), false);
+  assert.equal(existsSync(join(ws, '.ela.cloning')), false);
 });
 
 test('takılan git bağlantısı toplam süreyle değil, ilerleme olmamasıyla kesilir', async () => {

@@ -2,9 +2,9 @@
 // Anahtar repo adresine, oda kaydına ya da team.json'a yazılmaz. Klon çalışırken git'in
 // kimlik yardımcısı token'ı AGENTS_ROOM_GIT_TOKEN ortam değişkeninden okur.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 export type GitAuth = { kind: 'none' } | { kind: 'token'; token: string } | { kind: 'ssh'; sshKey: string };
 
@@ -144,22 +144,41 @@ export function gitLong(
 }
 
 /**
+ * Yarıda kalan klon işareti: klasörün yanındaki `.<ad>.cloning` dosyası. Klon doğrudan hedef klasöre açılır
+ * (klasör adını değiştirmek bazı dosya sistemlerinde, ör. Windows/macOS paylaşımlarında ya da antivirüs varken,
+ * EACCES ile reddedilir). İşaret duruyorsa klasör yarımdır: silinip baştan açılır.
+ */
+const cloningMark = (dir: string) => join(dirname(dir), `.${basename(dir)}.cloning`);
+
+/** Çalışma kopyası tamamlanmış mı? (İşaretsiz eski kopyalar tamam sayılır.) */
+export const workspaceReady = (dir: string) => existsSync(dir) && !existsSync(cloningMark(dir));
+
+/** Önbellek (bare repo) tamamlanmış mı? */
+export const cacheReady = (cache: string) => existsSync(join(cache, 'HEAD')) && !existsSync(cloningMark(cache));
+
+/** Klonu hedefe doğrudan açar; başarısız olursa yarım klasörü siler, başarılıysa işareti kaldırır. */
+async function cloneInPlace(
+  dir: string,
+  steps: () => Promise<{ ok: boolean; error?: string }>,
+): Promise<{ ok: boolean; error?: string }> {
+  mkdirSync(dirname(dir), { recursive: true });
+  writeFileSync(cloningMark(dir), '');
+  rmSync(dir, { recursive: true, force: true });
+  const r = await steps().catch((e: Error) => ({ ok: false, error: e.message }));
+  if (!r.ok) rmSync(dir, { recursive: true, force: true });
+  rmSync(cloningMark(dir), { force: true });
+  return r;
+}
+
+/**
  * Makine başına tek bir yerel önbellek (bare repo): büyük repo GitHub'dan bir kez indirilir, her agent'ın
  * çalışma kopyası buradan saniyeler içinde açılır. Önbellek varsa yalnızca güncellenir.
  */
 export async function syncCache(url: string, cache: string, auth: GitAuth, onProgress?: (line: string) => void): Promise<{ ok: boolean; error?: string }> {
-  if (existsSync(join(cache, 'HEAD'))) {
+  if (cacheReady(cache)) {
     return gitLong(['-C', cache, 'fetch', '--prune', '--progress', url, '+refs/heads/*:refs/heads/*'], { auth, url, onProgress });
   }
-  const tmp = `${cache}.tmp-${process.pid}`;
-  rmSync(tmp, { recursive: true, force: true });
-  const r = await gitLong(['clone', '--bare', '--progress', url, tmp], { auth, url, onProgress });
-  if (!r.ok) {
-    rmSync(tmp, { recursive: true, force: true });
-    return r;
-  }
-  renameSync(tmp, cache);
-  return { ok: true };
+  return cloneInPlace(cache, () => gitLong(['clone', '--bare', '--progress', url, cache], { auth, url, onProgress }));
 }
 
 /**
@@ -173,22 +192,17 @@ export async function cloneFromCache(
   auth: GitAuth,
   onProgress?: (line: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const tmp = join(dirname(dir), `.${dir.split('/').pop()}.tmp-${process.pid}`);
-  rmSync(tmp, { recursive: true, force: true });
-  const failed = (r: { ok: boolean; error?: string }) => {
-    rmSync(tmp, { recursive: true, force: true });
-    return r;
-  };
-  const c = await gitLong(['clone', '--progress', cache, tmp], { auth: { kind: 'none' }, onProgress });
-  if (!c.ok) return failed(c);
-  const r = spawnSync('git', ['-C', tmp, 'remote', 'set-url', 'origin', url], { encoding: 'utf8' });
-  if (r.status !== 0) return failed({ ok: false, error: redact((r.stderr || r.error?.message || '').trim(), auth) });
-  configureWorkspace(tmp, auth);
-  // origin/* başvuruları ortak repodan gelir (nesneler önbellekte olduğu için hızlıdır).
-  const f = await gitLong(['-C', tmp, 'fetch', '--progress', 'origin'], { auth, url, onProgress });
-  if (!f.ok) return failed(f);
-  renameSync(tmp, dir);
-  return { ok: true };
+  // Tamamlanmış bir kopyanın üzerine yazılmaz (içinde agent'ın işi olabilir).
+  if (workspaceReady(dir)) return { ok: false, error: `${dir} zaten var` };
+  return cloneInPlace(dir, async () => {
+    const c = await gitLong(['clone', '--progress', cache, dir], { auth: { kind: 'none' }, onProgress });
+    if (!c.ok) return c;
+    const r = spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', url], { encoding: 'utf8' });
+    if (r.status !== 0) return { ok: false, error: redact((r.stderr || r.error?.message || '').trim(), auth) };
+    configureWorkspace(dir, auth);
+    // origin/* başvuruları ortak repodan gelir (nesneler önbellekte olduğu için hızlıdır).
+    return gitLong(['-C', dir, 'fetch', '--progress', 'origin'], { auth, url, onProgress });
+  });
 }
 
 /** Var olan çalışma kopyasını günceller (kimlik ayarı + fetch); süre sınırı yerine takılma sınırı. */

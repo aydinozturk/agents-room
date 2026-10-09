@@ -23,7 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { type GitAuth, cloneFromCache, cloneRepo, expandHome, githubPushAccess, githubSlug, gitEnv, isHttps, isSsh, normalizeRepo, probeRepo, refreshWorkspace, seedEmptyRepo, syncCache } from './git-auth.ts';
+import { type GitAuth, cacheReady, cloneFromCache, cloneRepo, expandHome, githubPushAccess, githubSlug, gitEnv, isHttps, isSsh, normalizeRepo, probeRepo, refreshWorkspace, seedEmptyRepo, syncCache, workspaceReady } from './git-auth.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKSPACES = process.env.AGENTS_ROOM_WORKSPACES ? resolve(process.env.AGENTS_ROOM_WORKSPACES) : join(ROOT, 'workspaces');
@@ -489,10 +489,11 @@ writeFileSync(prevFile, JSON.stringify({ ...team, agents: [...team.agents, ...pl
 // Uzak repo makine başına bir kez indirilir (yerel önbellek); agent kopyaları oradan açılır.
 const remoteRepo = isHttps(repo) || isSsh(repo);
 const CACHE = join(WS, '.repo-cache.git');
-// Yarıda kalmış (konteyner durdurulmuş) indirme/kopya klasörleri: büyük repolarda gigabaytlarca yer tutar.
+// Eski sürümlerden yarıda kalmış geçici klasörler: büyük repolarda gigabaytlarca yer tutar.
+// (Yarım klonlar artık `.<ad>.cloning` işaretiyle bulunur ve baştan açılır.)
 for (const f of readdirSync(WS)) if (/^\..+\.tmp-\d+$/.test(f) || /^\.repo-cache\.git\.tmp-\d+$/.test(f)) rmSync(join(WS, f), { recursive: true, force: true });
 if (remoteRepo) {
-  const fresh = !existsSync(join(CACHE, 'HEAD'));
+  const fresh = !cacheReady(CACHE);
   console.log('');
   process.stdout.write(fresh ? `  repo indiriliyor (bu makinede bir kez; büyük repolarda birkaç dakika sürebilir)…\n` : `  repo önbelleği güncelleniyor…\n`);
   let lastShown = 0;
@@ -511,7 +512,7 @@ if (remoteRepo) {
 
 // Eksik çalışma kopyaları birlikte açılır (büyük repolarda dosyaların çıkarılması agent başına dakikalar sürebilir).
 const freshDirs = new Set<string>();
-const missingWs = plan.filter((p) => !existsSync(join(WS, p.name)));
+const missingWs = plan.filter((p) => !workspaceReady(join(WS, p.name)));
 if (missingWs.length) {
   console.log(`  çalışma kopyaları hazırlanıyor: ${missingWs.map((p) => p.name).join(', ')}…`);
   const t0 = Date.now();

@@ -106,12 +106,33 @@ export function gitLong(
   opt: { auth: GitAuth; url?: string; cwd?: string; stallMs?: number; onProgress?: (line: string) => void },
 ): Promise<{ ok: boolean; error?: string }> {
   const stallMs = opt.stallMs ?? (Number(process.env.AGENTS_ROOM_GIT_STALL_SEC) || 300) * 1000; // boş/geçersiz → 300 sn
-  return new Promise((done) => {
+  return new Promise((resolveOnce) => {
+    // detached: git ve alt süreçleri (git-remote-http, ssh) kendi süreç grubunda. Takılmada bütün grup
+    // öldürülür; yalnız üst git öldürülürse alt süreç stderr'i açık tutar ve 'close' hiç gelmez.
     const p = spawn('git', [...gitConfigArgs(opt.auth), ...args], {
       cwd: opt.cwd,
       env: { ...process.env, ...gitEnv(opt.auth, opt.url ?? '') },
       stdio: ['ignore', 'ignore', 'pipe'],
+      detached: true,
     });
+    let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
+    let closeTimer: NodeJS.Timeout | undefined;
+    const done = (r: { ok: boolean; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      clearTimeout(closeTimer);
+      resolveOnce(r);
+    };
+    const killGroup = (sig: NodeJS.Signals) => {
+      try {
+        process.kill(-p.pid!, sig);
+      } catch {
+        // grup zaten bitti
+      }
+    };
     let tail = '';
     let stalled = false;
     let timer: NodeJS.Timeout;
@@ -119,7 +140,8 @@ export function gitLong(
       clearTimeout(timer);
       timer = setTimeout(() => {
         stalled = true;
-        p.kill('SIGTERM');
+        killGroup('SIGTERM');
+        killTimer = setTimeout(() => killGroup('SIGKILL'), 2000);
       }, stallMs);
     };
     arm();
@@ -129,17 +151,22 @@ export function gitLong(
       tail = (tail + chunk).slice(-4000);
       for (const line of chunk.split(/[\r\n]+/)) if (line.trim()) opt.onProgress?.(line.trim());
     });
-    p.on('error', (e) => {
-      clearTimeout(timer);
-      done({ ok: false, error: e.message });
-    });
-    p.on('close', (code) => {
-      clearTimeout(timer);
+    p.on('error', (e) => done({ ok: false, error: e.message }));
+    const finish = (code: number | null) => {
       if (code === 0) return done({ ok: true });
       const last = tail.split(/[\r\n]+/).filter((l) => l.trim() && !/^(remote: )?(Counting|Compressing|Receiving|Resolving|Enumerating|Updating)/.test(l.trim()));
       const msg = stalled ? `${stallMs / 1000} sn boyunca ilerleme yok (ağ bağlantısı?)` : last.slice(-3).join(' ') || `git çıkış kodu ${code}`;
       done({ ok: false, error: redact(msg, opt.auth) });
+    };
+    // 'close' stderr kapanınca gelir; alt süreç onu açık tutarsa 'exit'ten 1 sn sonra yine de çözülür.
+    p.on('exit', (code) => {
+      clearTimeout(timer);
+      closeTimer = setTimeout(() => {
+        killGroup('SIGKILL');
+        finish(code);
+      }, 1000);
     });
+    p.on('close', (code) => finish(code));
   });
 }
 

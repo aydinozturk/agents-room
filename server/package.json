@@ -15,7 +15,7 @@
     "dev": "node --watch src/index.ts",
     "cli": "node src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test --test-timeout=60000 test/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",

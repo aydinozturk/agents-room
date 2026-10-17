@@ -165,8 +165,12 @@ test('takılan git bağlantısı toplam süreyle değil, ilerleme olmamasıyla k
   const port = (hang.address() as { port: number }).port;
   const t0 = Date.now();
   const r = await gitLong(['ls-remote', `http://127.0.0.1:${port}/x.git`], { auth: { kind: 'none' }, stallMs: 1500 });
+  const took = Date.now() - t0;
   hang.close();
   assert.equal(r.ok, false);
   assert.match(r.error!, /ilerleme yok/);
-  assert.ok(Date.now() - t0 < 10_000);
+  assert.ok(took < 1500 + 2000, `${took} ms`);
+  // Alt süreç (git-remote-http) geride kalmaz.
+  const ps = spawnSync('ps', ['-eo', 'args'], { encoding: 'utf8' }).stdout;
+  assert.ok(!ps.split('\n').some((l) => /git-remote/.test(l) && l.includes(`127.0.0.1:${port}`)), ps);
 });

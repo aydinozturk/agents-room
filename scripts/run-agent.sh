@@ -30,6 +30,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -f "$HOME/.config/agents-room/env" && -z "${AGENTS_ROOM_TOKEN:-}" ]] && source "$HOME/.config/agents-room/env"
+# Kayıt sırrı agent'ın işi değil: model oturumlarına ve onların kabuklarına geçmesin.
+unset AGENTS_ROOM_ENROLL_SECRET
 : "${AGENTS_ROOM_URL:?AGENTS_ROOM_URL gerekli}" "${AGENTS_ROOM_TOKEN:?AGENTS_ROOM_TOKEN gerekli}"
 [[ -n "$CLIENT" ]] || { echo "--client gerekli" >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

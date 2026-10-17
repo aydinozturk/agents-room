@@ -215,3 +215,14 @@ test('kota: runner sunucuya unavailable bildirir, çıkmaz, bekledikten sonra ye
   assert.match(r.out(), /kotası\/limiti doldu/);
   await stop(r);
 });
+
+test('kayıt sırrı model oturumunun ortamına geçmez', { skip }, async () => {
+  const { repo } = makeRepo('env');
+  const out = join(tmp, 'env-out');
+  const bin = fakeBin('env', `echo "secret=\${AGENTS_ROOM_ENROLL_SECRET:-}" > "${out}"; echo '{"type":"result","result":"ok"}'`);
+  wakes = wakeN(1, 'env');
+  const r = startRunner(repo, bin, { ...FAST_ENV, AGENTS_ROOM_ENROLL_SECRET: 'cok-gizli' });
+  await until(() => existsSync(out), 15_000, `oturum açılmadı: ${r.out()}`);
+  assert.equal(readFileSync(out, 'utf8').trim(), 'secret=');
+  await stop(r);
+});

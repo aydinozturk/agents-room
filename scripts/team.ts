@@ -343,6 +343,12 @@ const NAME_POOL = [
   'umut', 'ela', 'cem', 'naz', 'baris', 'yagmur', 'koray', 'duru', 'sarp', 'ilgaz', 'mira', 'tolga', 'beren', 'aras', 'gizem',
 ];
 const taken = new Set(info.names ?? info.agents.map((a) => a.name)); // names: iptal edilenler dahil tüm kayıtlı adlar
+/** Agent süreçlerine geçen ortam: kayıt sırrı yalnız bu betiğin kayıt çağrısında kullanılır, agent'a verilmez. */
+function agentProcessEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.AGENTS_ROOM_ENROLL_SECRET;
+  return env;
+}
 /** Bu makinede daha önce bu agent için alınmış token (teams/<oda>/<ad>.env). */
 function storedToken(name: string): string | null {
   const f = join(SECRETS, room, `${name}.env`);
@@ -611,7 +617,7 @@ for (const p of plan) {
     detached: true,
     stdio: opt.foreground ? ['ignore', 'pipe', 'pipe'] : ['ignore', fd, fd],
     env: {
-      ...process.env,
+      ...agentProcessEnv(),
       ...agentEnv,
       AGENTS_ROOM_LOGDIR: join(WS, 'logs'),
       ...(p.client === 'hermes' ? { HERMES_PROFILE: 'agentsroom' } : {}),

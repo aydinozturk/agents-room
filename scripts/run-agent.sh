@@ -162,6 +162,129 @@ esac
 [[ "$MODEL" == default ]] && MODEL=""
 [[ "$EFFORT" == default ]] && EFFORT=""
 
+run_client() { # SESSION_PROMPT ve LOG ile bir model oturumu; çıkış kodu RC'de
+  RC=0
+  case "$CLIENT" in
+    claude)
+      # Genel yapılandırmaya dokunmadan, bu çalıştırmaya özel MCP yapılandırması.
+      # Token dosyaya doğrudan yazılır (mktemp -d → dizin yalnızca kullanıcıya açık) ve çıkışta silinir.
+      CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-room.XXXXXX")"; CFG="$CFG_DIR/mcp.json"
+      trap 'rm -rf "$CFG_DIR"' EXIT
+      cat > "$CFG" <<EOF
+{"mcpServers":{"agents-room":{"type":"http","url":"$AGENTS_ROOM_URL","headers":{"Authorization":"Bearer $AGENTS_ROOM_TOKEN"}}}}
+EOF
+      # full: tüm izin denetimleri atlanır (dizin sınırları ve korunan dosyalar dahil); restricted: izin listesi.
+      if [[ "$PERMS" == full ]]; then
+        PERM_ARGS=(--dangerously-skip-permissions)
+      else
+        PERM_ARGS=(--permission-mode acceptEdits --allowedTools "mcp__agents-room" "Read" "Edit" "Write" "Glob" "Grep" "Bash(git:*)" "Bash(npm:*)" "Bash(npx:*)" "Bash(node:*)" "Bash(ls:*)" "Bash(mkdir:*)" "Bash(cat:*)" "WebSearch" "WebFetch" ${GH_CLAUDE[@]+"${GH_CLAUDE[@]}"} ${EXTRA_TOOLS[@]+"${EXTRA_TOOLS[@]}"})
+      fi
+      MCP_TOOL_TIMEOUT=120000 claude -p "$SESSION_PROMPT" \
+        --mcp-config "$CFG" --strict-mcp-config \
+        --add-dir "$SKILL" "$(dirname "$REPO")" \
+        "${PERM_ARGS[@]}" \
+        ${MODEL:+--model "$MODEL"} ${EFFORT:+--effort "$EFFORT"} \
+        --output-format stream-json --verbose ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
+      RC=${PIPESTATUS[0]}
+      rm -rf "$CFG_DIR"
+      ;;
+    codex)
+      # Codex komutları Linux'ta bwrap ile kendi sandbox'ında çalıştırır; Docker'ın varsayılan güvenlik profili buna
+      # izin vermez (bwrap: No permissions to create a new namespace) ve agent hiçbir komut çalıştıramaz.
+      # Konteynerde sandbox konteynerin kendisidir: root olmayan kullanıcı, yalnızca kendi birimleri. Elle: AGENTS_ROOM_CODEX_SANDBOX.
+      CODEX_SANDBOX="${AGENTS_ROOM_CODEX_SANDBOX:-}"
+      if [[ -z "$CODEX_SANDBOX" && "$PERMS" == full ]]; then
+        CODEX_SANDBOX=bypass
+      elif [[ -z "$CODEX_SANDBOX" ]]; then
+        CODEX_SANDBOX=workspace-write
+        if [[ "$(uname -s)" == Linux ]] && ! codex sandbox linux -- true >/dev/null 2>&1; then
+          if in_container; then
+            CODEX_SANDBOX=danger-full-access
+          else
+            echo "⚠️  codex: bu makinede Codex sandbox'ı (bwrap) çalışmıyor; agent komut çalıştıramayacak. Çözüm: sysctl kernel.unprivileged_userns_clone=1 ya da AGENTS_ROOM_CODEX_SANDBOX=danger-full-access" >&2
+          fi
+        fi
+      fi
+      # git push için sandbox'ta ağ açık olmalı. Codex varsayılan olarak *TOKEN* adlı değişkenleri kabuktan
+      # siler; git kimlik yardımcısının ihtiyacı olanları açıkça listeleyip yalnızca onları geçiriyoruz.
+      if [[ "$CODEX_SANDBOX" == bypass ]]; then
+        # full: onay sorulmaz, sandbox yok, komutlar tüm ortamı görür.
+        PERM_ARGS=(--dangerously-bypass-approvals-and-sandbox -c 'shell_environment_policy.inherit="all"' -c 'shell_environment_policy.ignore_default_excludes=true')
+      else
+        PERM_ARGS=(--sandbox "$CODEX_SANDBOX" -c 'sandbox_workspace_write.network_access=true' -c 'shell_environment_policy.ignore_default_excludes=true'
+          -c 'shell_environment_policy.include_only=["PATH","HOME","USER","LANG","LC_*","TERM","TMPDIR","SHELL","AGENTS_ROOM_GIT_TOKEN","AGENTS_ROOM_BASE_BRANCH","GH_TOKEN","GIT_SSH_COMMAND","GIT_TERMINAL_PROMPT"]')
+      fi
+      codex exec --json "${PERM_ARGS[@]}" \
+        -c "mcp_servers.agents-room.url=\"$AGENTS_ROOM_URL\"" \
+        -c 'mcp_servers.agents-room.bearer_token_env_var="AGENTS_ROOM_TOKEN"' \
+        -c 'mcp_servers.agents-room.tool_timeout_sec=120' \
+        -c 'mcp_servers.agents-room.default_tools_approval_mode="approve"' \
+        ${MODEL:+-m "$MODEL"} ${EFFORT:+-c "model_reasoning_effort=\"$EFFORT\""} ${EXTRA[@]+"${EXTRA[@]}"} "$SESSION_PROMPT" | tee "$LOG" >/dev/null
+      RC=${PIPESTATUS[0]}
+      ;;
+    hermes)
+      # Hermes MCP bağlantısını ~/.hermes/config.yaml'dan okur (install-client.sh çıktısına bakın).
+      # Ayrı bir profil kullanmak için: HERMES_PROFILE=agents-room → hermes -p agents-room
+      hermes ${HERMES_PROFILE:+-p "$HERMES_PROFILE"} --skills agents-room ${MODEL:+-m "$MODEL"} ${EXTRA[@]+"${EXTRA[@]}"} -z "$SESSION_PROMPT" | tee "$LOG"
+      RC=${PIPESTATUS[0]}
+      ;;
+    gemini)
+      # Kullanıcının ~/.gemini ayarlarına dokunmadan, bu çalıştırmaya özel "sistem" ayar dosyası.
+      # Token dosyaya yazılmaz: Gemini ayarlardaki ${VAR} ifadelerini ortamdan açar.
+      CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-room.XXXXXX")"
+      trap 'rm -rf "$CFG_DIR"' EXIT
+      cat > "$CFG_DIR/settings.json" <<'JSON'
+{"mcpServers":{"agents-room":{"httpUrl":"${AGENTS_ROOM_URL}","headers":{"Authorization":"Bearer ${AGENTS_ROOM_TOKEN}"},"trust":true,"timeout":120000}},"skills":{"enabled":true}}
+JSON
+      # Konteynerde/başsız çalışmada API anahtarıyla kimlik doğrulama.
+      if [[ -n "${GEMINI_API_KEY:-}" && ! -f "$HOME/.gemini/oauth_creds.json" ]]; then
+        sed -i.bak 's/,"skills"/,"security":{"auth":{"selectedType":"gemini-api-key"}},"skills"/' "$CFG_DIR/settings.json" && rm -f "$CFG_DIR/settings.json.bak"
+      fi
+      if [[ "$PERMS" == full ]]; then
+        PERM_ARGS=(--approval-mode yolo)
+      else
+        PERM_ARGS=(--approval-mode auto_edit --allowed-tools "run_shell_command(git),run_shell_command(npm),run_shell_command(npx),run_shell_command(node),run_shell_command(ls),run_shell_command(mkdir),run_shell_command(cat)$GH_GEMINI")
+      fi
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH="$CFG_DIR/settings.json" GEMINI_CLI_TRUST_WORKSPACE=true \
+      gemini -p "$SESSION_PROMPT" \
+        "${PERM_ARGS[@]}" \
+        --allowed-mcp-server-names agents-room \
+        --include-directories "$SKILL,$(dirname "$REPO")" \
+        ${MODEL:+-m "$MODEL"} \
+        --output-format stream-json ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
+      RC=${PIPESTATUS[0]}
+      rm -rf "$CFG_DIR"
+      ;;
+    *) echo "bilinmeyen istemci: $CLIENT" >&2; exit 2 ;;
+  esac
+}
+
+# Oturum sonucu: quota (model kotası/limiti) | auth (giriş yok/geçersiz) | transient (geçici) | ok | crash.
+# Yalnız logun sonuna bakılır: oturum içinde okunan kod ya da metin "rate limit" geçse de yanlış sınıflanmasın.
+QUOTA_RE='spend limit|out of credits|usage limit|rate limit|quota exceeded|insufficient_quota|credit balance is too low'
+AUTH_RE='not logged in|please run /login|invalid api key|authentication_error|please log ?in|codex login|api key not valid|unauthorized'
+TRANSIENT_RE='failed to refresh oauth token|overloaded_error|econnreset|socket hang up'
+classify() { # $1 çıkış kodu, $2 log
+  local tail; tail="$(tail -n 5 "$2" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  if grep -Eq "$TRANSIENT_RE" <<<"$tail"; then echo transient
+  elif grep -Eq "$QUOTA_RE" <<<"$tail"; then echo quota
+  elif grep -Eq "$AUTH_RE" <<<"$tail"; then echo auth
+  elif [[ "$1" == 0 ]]; then echo ok
+  else echo crash; fi
+}
+reason_of() { # logdaki asıl hata metni (stream-json'da "result" alanı), yoksa son satır
+  local r; r="$(grep -o '"result":"[^"]*"' "$1" 2>/dev/null | tail -n 1 | cut -c11- | tr -d '"' | cut -c1-300 || true)"
+  [[ -n "$r" ]] && printf '%s' "$r" || tail -n 1 "$1" 2>/dev/null | cut -c1-300
+}
+report_status() { # $1 unavailable|available, $2 neden, $3 bitiş (epoch ms, opsiyonel)
+  local body; body="$(printf '{"state":"%s","reason":"%s"%s}' "$1" "$(printf '%s' "$2" | tr -d '"\\' | tr '\n\t\r' '   ' | cut -c1-200)" "${3:+,\"until\":$3}")"
+  curl -s -m 15 -X POST "$API/api/agent/status" -H "Authorization: Bearer $AGENTS_ROOM_TOKEN" -H 'content-type: application/json' -d "$body" >/dev/null 2>&1 || true
+}
+QUOTA_SEC="${AGENTS_ROOM_QUOTA_SEC:-1800}"           # kota bitince bekleme (sunucuya bildirilir)
+TRANSIENT_SEC="${AGENTS_ROOM_TRANSIENT_SEC:-45}"     # geçici hatada yeniden deneme beklemesi
+FAST_BACKOFF_SEC="${AGENTS_ROOM_FAST_BACKOFF_SEC:-20}" # art arda başarısız oturumlar arasında artan bekleme birimi
+SESSION_GAP_SEC="${AGENTS_ROOM_SESSION_GAP_SEC:-2}"
+
 IMMEDIATE=false
 [[ "$ROLE" == orchestrator && -n "$GOAL" ]] && IMMEDIATE=true
 i=0 NET_FAIL=0 REPEAT=0 PREV_SIG="" STARTS=()
@@ -209,116 +332,40 @@ $NOTE"
   LOG="$LOGDIR/${CLIENT}-${ROLE}-${ROOM}-$(date +%Y%m%d-%H%M%S).log"
   echo "▶ oturum $i ($CLIENT${MODEL:+ $MODEL}${EFFORT:+/$EFFORT}, $ROLE, izin=$PERMS, oda=$ROOM; sebep: $(printf '%s' "$NOTE" | head -n 1 | sed 's/^WHY THIS SESSION STARTED: //') → $LOG"
   START=$(date +%s)
-  set +e # CLI hata koduyla çıksa da döngü sürsün (aşağıda hızlı çıkışlar ayrıca ele alınır)
-  case "$CLIENT" in
-    claude)
-      # Genel yapılandırmaya dokunmadan, bu çalıştırmaya özel MCP yapılandırması.
-      # Token dosyaya doğrudan yazılır (mktemp -d → dizin yalnızca kullanıcıya açık) ve çıkışta silinir.
-      CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-room.XXXXXX")"; CFG="$CFG_DIR/mcp.json"
-      trap 'rm -rf "$CFG_DIR"' EXIT
-      cat > "$CFG" <<EOF
-{"mcpServers":{"agents-room":{"type":"http","url":"$AGENTS_ROOM_URL","headers":{"Authorization":"Bearer $AGENTS_ROOM_TOKEN"}}}}
-EOF
-      # full: tüm izin denetimleri atlanır (dizin sınırları ve korunan dosyalar dahil); restricted: izin listesi.
-      if [[ "$PERMS" == full ]]; then
-        PERM_ARGS=(--dangerously-skip-permissions)
-      else
-        PERM_ARGS=(--permission-mode acceptEdits --allowedTools "mcp__agents-room" "Read" "Edit" "Write" "Glob" "Grep" "Bash(git:*)" "Bash(npm:*)" "Bash(npx:*)" "Bash(node:*)" "Bash(ls:*)" "Bash(mkdir:*)" "Bash(cat:*)" "WebSearch" "WebFetch" ${GH_CLAUDE[@]+"${GH_CLAUDE[@]}"} ${EXTRA_TOOLS[@]+"${EXTRA_TOOLS[@]}"})
-      fi
-      MCP_TOOL_TIMEOUT=120000 claude -p "$SESSION_PROMPT" \
-        --mcp-config "$CFG" --strict-mcp-config \
-        --add-dir "$SKILL" "$(dirname "$REPO")" \
-        "${PERM_ARGS[@]}" \
-        ${MODEL:+--model "$MODEL"} ${EFFORT:+--effort "$EFFORT"} \
-        --output-format stream-json --verbose ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
-      rm -rf "$CFG_DIR"
-      ;;
-    codex)
-      # Codex komutları Linux'ta bwrap ile kendi sandbox'ında çalıştırır; Docker'ın varsayılan güvenlik profili buna
-      # izin vermez (bwrap: No permissions to create a new namespace) ve agent hiçbir komut çalıştıramaz.
-      # Konteynerde sandbox konteynerin kendisidir: root olmayan kullanıcı, yalnızca kendi birimleri. Elle: AGENTS_ROOM_CODEX_SANDBOX.
-      CODEX_SANDBOX="${AGENTS_ROOM_CODEX_SANDBOX:-}"
-      if [[ -z "$CODEX_SANDBOX" && "$PERMS" == full ]]; then
-        CODEX_SANDBOX=bypass
-      elif [[ -z "$CODEX_SANDBOX" ]]; then
-        CODEX_SANDBOX=workspace-write
-        if [[ "$(uname -s)" == Linux ]] && ! codex sandbox linux -- true >/dev/null 2>&1; then
-          if in_container; then
-            CODEX_SANDBOX=danger-full-access
-          else
-            echo "⚠️  codex: bu makinede Codex sandbox'ı (bwrap) çalışmıyor; agent komut çalıştıramayacak. Çözüm: sysctl kernel.unprivileged_userns_clone=1 ya da AGENTS_ROOM_CODEX_SANDBOX=danger-full-access" >&2
-          fi
-        fi
-      fi
-      # git push için sandbox'ta ağ açık olmalı. Codex varsayılan olarak *TOKEN* adlı değişkenleri kabuktan
-      # siler; git kimlik yardımcısının ihtiyacı olanları açıkça listeleyip yalnızca onları geçiriyoruz.
-      if [[ "$CODEX_SANDBOX" == bypass ]]; then
-        # full: onay sorulmaz, sandbox yok, komutlar tüm ortamı görür.
-        PERM_ARGS=(--dangerously-bypass-approvals-and-sandbox -c 'shell_environment_policy.inherit="all"' -c 'shell_environment_policy.ignore_default_excludes=true')
-      else
-        PERM_ARGS=(--sandbox "$CODEX_SANDBOX" -c 'sandbox_workspace_write.network_access=true' -c 'shell_environment_policy.ignore_default_excludes=true'
-          -c 'shell_environment_policy.include_only=["PATH","HOME","USER","LANG","LC_*","TERM","TMPDIR","SHELL","AGENTS_ROOM_GIT_TOKEN","AGENTS_ROOM_BASE_BRANCH","GH_TOKEN","GIT_SSH_COMMAND","GIT_TERMINAL_PROMPT"]')
-      fi
-      codex exec --json "${PERM_ARGS[@]}" \
-        -c "mcp_servers.agents-room.url=\"$AGENTS_ROOM_URL\"" \
-        -c 'mcp_servers.agents-room.bearer_token_env_var="AGENTS_ROOM_TOKEN"' \
-        -c 'mcp_servers.agents-room.tool_timeout_sec=120' \
-        -c 'mcp_servers.agents-room.default_tools_approval_mode="approve"' \
-        ${MODEL:+-m "$MODEL"} ${EFFORT:+-c "model_reasoning_effort=\"$EFFORT\""} ${EXTRA[@]+"${EXTRA[@]}"} "$SESSION_PROMPT" | tee "$LOG" >/dev/null
-      ;;
-    hermes)
-      # Hermes MCP bağlantısını ~/.hermes/config.yaml'dan okur (install-client.sh çıktısına bakın).
-      # Ayrı bir profil kullanmak için: HERMES_PROFILE=agents-room → hermes -p agents-room
-      hermes ${HERMES_PROFILE:+-p "$HERMES_PROFILE"} --skills agents-room ${MODEL:+-m "$MODEL"} ${EXTRA[@]+"${EXTRA[@]}"} -z "$SESSION_PROMPT" | tee "$LOG"
-      ;;
-    gemini)
-      # Kullanıcının ~/.gemini ayarlarına dokunmadan, bu çalıştırmaya özel "sistem" ayar dosyası.
-      # Token dosyaya yazılmaz: Gemini ayarlardaki ${VAR} ifadelerini ortamdan açar.
-      CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-room.XXXXXX")"
-      trap 'rm -rf "$CFG_DIR"' EXIT
-      cat > "$CFG_DIR/settings.json" <<'JSON'
-{"mcpServers":{"agents-room":{"httpUrl":"${AGENTS_ROOM_URL}","headers":{"Authorization":"Bearer ${AGENTS_ROOM_TOKEN}"},"trust":true,"timeout":120000}},"skills":{"enabled":true}}
-JSON
-      # Konteynerde/başsız çalışmada API anahtarıyla kimlik doğrulama.
-      if [[ -n "${GEMINI_API_KEY:-}" && ! -f "$HOME/.gemini/oauth_creds.json" ]]; then
-        sed -i.bak 's/,"skills"/,"security":{"auth":{"selectedType":"gemini-api-key"}},"skills"/' "$CFG_DIR/settings.json" && rm -f "$CFG_DIR/settings.json.bak"
-      fi
-      if [[ "$PERMS" == full ]]; then
-        PERM_ARGS=(--approval-mode yolo)
-      else
-        PERM_ARGS=(--approval-mode auto_edit --allowed-tools "run_shell_command(git),run_shell_command(npm),run_shell_command(npx),run_shell_command(node),run_shell_command(ls),run_shell_command(mkdir),run_shell_command(cat)$GH_GEMINI")
-      fi
-      GEMINI_CLI_SYSTEM_SETTINGS_PATH="$CFG_DIR/settings.json" GEMINI_CLI_TRUST_WORKSPACE=true \
-      gemini -p "$SESSION_PROMPT" \
-        "${PERM_ARGS[@]}" \
-        --allowed-mcp-server-names agents-room \
-        --include-directories "$SKILL,$(dirname "$REPO")" \
-        ${MODEL:+-m "$MODEL"} \
-        --output-format stream-json ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
-      rm -rf "$CFG_DIR"
-      ;;
-    *) echo "bilinmeyen istemci: $CLIENT" >&2; exit 2 ;;
-  esac
-  set -e
-  # Hemen biten oturum genelde giriş/ayar sorunudur: art arda tekrarlarsa bekleyerek dene, sonunda dur.
-  # (Kısa bir soruyu yanıtlayan gerçek oturum da bir dakikadan kısa sürebilir; eşik bu yüzden düşük.)
+  # Geçici hata (ör. aynı anda başlayan oturumların OAuth yenileme yarışı): biraz bekleyip aynı oturumu yeniden dene.
+  for TRY in 1 2 3; do
+    set +e # CLI hata koduyla çıksa da döngü sürsün (sonuç aşağıda sınıflanır)
+    run_client
+    set -e
+    KIND="$(classify "$RC" "$LOG")"
+    [[ "$KIND" == transient && $TRY -lt 3 ]] || break
+    PAUSE=$((TRANSIENT_SEC + RANDOM % (TRANSIENT_SEC / 3 + 1)))
+    echo "… geçici hata (oturum yeniden denenecek, $PAUSE sn sonra): $(reason_of "$LOG")" >&2
+    sleep "$PAUSE"
+  done
   DUR=$(( $(date +%s) - START ))
-  if (( DUR < 15 )); then FAST=$(( ${FAST:-0} + 1 )); else FAST=0; fi
-  if (( FAST >= 2 )); then
-    # stream-json loglarında asıl neden "result" alanındadır (ör. "Not logged in · Please run /login").
-    REASON=$(grep -o '"result":"[^"]*"' "$LOG" 2>/dev/null | tail -n 1 | cut -c11- | tr -d '"' | cut -c1-300 || true)
-    if [[ -n "$REASON" ]]; then
-      echo "oturum ${DUR} sn'de bitti (art arda $FAST kez): $REASON" >&2
-    else
-      echo "oturum ${DUR} sn'de bitti (art arda $FAST kez). Logun sonu:" >&2
-      tail -n 3 "$LOG" 2>/dev/null | cut -c1-300 >&2
-    fi
+  case "$KIND" in
+    quota)
+      # Kota/limit: çıkma, bekle. Sunucu odaya haber verir; başkan koltuğu başka orkestratöre geçer.
+      UNTIL_MS=$(( ($(date +%s) + QUOTA_SEC) * 1000 ))
+      WHY="$(reason_of "$LOG")"
+      echo "⛔ model kotası/limiti doldu ($WHY); $QUOTA_SEC sn bekleniyor, sonra yeniden denenecek" >&2
+      report_status unavailable "quota: $WHY" "$UNTIL_MS"
+      sleep "$QUOTA_SEC"
+      FAST=0 ;;
+    ok) FAST=0 ;;
+    transient) ;; # yeniden denemeler de geçici hatayla bitti: sayaca girmez
+    auth) FAST=$(( ${FAST:-0} + 1 )) ;;
+    crash) if (( DUR < 15 )); then FAST=$(( ${FAST:-0} + 1 )); else FAST=0; fi ;;
+  esac
+  if (( ${FAST:-0} >= 2 )); then
+    echo "oturum ${DUR} sn'de bitti ($KIND, kod $RC, art arda $FAST kez): $(reason_of "$LOG")" >&2
   fi
-  if (( FAST >= 5 )); then
-    echo "■ oturumlar art arda hemen bitiyor; agent durduruldu. Model girişini (agents-room login $CLIENT) ve logu kontrol edin: $LOG" >&2
+  if (( ${FAST:-0} >= 5 )); then
+    echo "■ oturumlar art arda başarısız ($KIND: $(reason_of "$LOG")); agent durduruldu. Model girişini (agents-room login $CLIENT) ve logu kontrol edin: $LOG" >&2
     exit 3
   fi
-  if (( FAST > 0 )); then sleep $(( FAST * 20 )); fi
+  if (( ${FAST:-0} > 0 )); then sleep $(( FAST * FAST_BACKOFF_SEC )); fi
   # Oturumda yarıda kalan mesaj okumaları vb. için kısa bir nefes; ardından yeniden oturumsuz bekleme.
-  sleep 2
+  sleep "$SESSION_GAP_SEC"
 done

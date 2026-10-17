@@ -111,6 +111,22 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
     }
   });
 
+  // Runner bildirimi: model kotası/limiti doldu (unavailable) ya da agent yeniden hazır (available).
+  //   {state: 'unavailable'|'available', reason?: string, until?: epoch ms | ISO tarih}
+  app.post('/api/agent/status', auth(['worker', 'orchestrator']), (req, res) => {
+    const state = req.body?.state;
+    if (state !== 'unavailable' && state !== 'available') return res.status(400).json({ error: "state: 'unavailable' | 'available'" });
+    const raw = req.body?.until;
+    const until = typeof raw === 'number' ? raw : typeof raw === 'string' && raw ? Date.parse(raw) : undefined;
+    if (until !== undefined && !Number.isFinite(until)) return res.status(400).json({ error: 'until: epoch ms ya da ISO tarih' });
+    try {
+      const a = svc.setAvailability(req.agent!.name, { state, reason: typeof req.body?.reason === 'string' ? req.body.reason : undefined, until });
+      res.json({ name: a.name, unavailable_until: a.unavailable_until, unavailable_reason: a.unavailable_reason });
+    } catch (e) {
+      res.status(e instanceof RoomError ? 400 : 500).json({ error: (e as Error).message });
+    }
+  });
+
   // ------------------------------------------------------------------ Kayıt (enroll)
   // Uzak makineler paylaşılan kayıt sırrı (ya da admin token'ı) ile kendi agent kimliklerini alır;
   // ekip kurulumu (scripts/team.ts) bunu kullanır. Kaba kuvvete karşı IP başına deneme sınırı vardır.

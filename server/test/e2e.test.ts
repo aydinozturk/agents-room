@@ -279,6 +279,51 @@ test('plan görevi: kiralaması dolunca işçiye düşmez; iptal edilen agent g�
   svc.review('orch', parent.id, { action: 'cancel' });
 });
 
+test('kota: runner bildirir → odaya haber, /api/state, başkanlık hemen devredilir; dönüşte geri gelir', async () => {
+  svc.createRoom('kota', null, null, 'admin');
+  const o2 = svc.createAgent({ name: 'orch2', kind: 'codex', role: 'orchestrator' });
+  tokens.orch2 = o2.token;
+  svc.join('orch', 'kota');
+  svc.join('orch2', 'kota');
+  svc.join('admin', 'kota');
+  svc.touch('orch');
+  svc.touch('orch2');
+  svc.chairAction('admin', 'kota', 'transfer', 'orch');
+  assert.equal(svc.chairOf('kota'), 'orch');
+  const since = svc.history(null, 'kota', { limit: 1 }).at(-1)!.id;
+  const post = (token: string, body: unknown) =>
+    fetch(base + '/api/agent/status', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  assert.equal((await post(tokens.orch!, { state: 'tired' })).status, 400);
+  assert.equal((await post(tokens.admin!, { state: 'unavailable' })).status, 403);
+  const t0 = Date.now();
+  const r = await post(tokens.orch!, { state: 'unavailable', reason: 'quota: spend limit reached' });
+  assert.equal(r.status, 200);
+  assert.ok(Date.now() - t0 < 1000);
+  assert.equal(svc.chairOf('kota'), 'orch2');
+  const msgs = svc.history(null, 'kota', { since_id: since });
+  const down = msgs.find((m) => m.body.startsWith('⛔ @orch is unavailable'))!;
+  assert.ok(down, msgs.map((m) => m.body).join('\n'));
+  assert.ok(down.mentions.includes('admin'));
+  const st = (await (await fetch(base + '/api/state', { headers: { Authorization: `Bearer ${tokens.admin}` } })).json()) as any;
+  const me = st.agents.find((a: any) => a.name === 'orch');
+  assert.ok(me.unavailable_until > Date.now() + 25 * 60_000);
+  assert.match(me.unavailable_reason, /quota/);
+  // Kotadaki orkestratör başkan seçilmez.
+  assert.deepEqual(svc.roomOrchestrators('kota'), ['orch2']);
+
+  // Bekleme bitince runner yeniden uyandırma ister: agent masaya döner.
+  const w = await fetch(base + '/api/agent/wake', { method: 'POST', headers: { Authorization: `Bearer ${tokens.orch}`, 'content-type': 'application/json' }, body: JSON.stringify({ room: 'kota', timeout_sec: 0 }) });
+  assert.equal(w.status, 200);
+  assert.equal(svc.getAgent('orch')!.unavailable_until, null);
+  assert.ok(svc.history(null, 'kota', { since_id: since }).some((m) => m.body === '✅ @orch is back online.'));
+  // Açık "available" bildirimi de durumu düzeltir.
+  await post(tokens.orch2!, { state: 'unavailable', reason: 'quota', until: new Date(Date.now() + 3600_000).toISOString() });
+  assert.equal(svc.chairOf('kota'), 'orch');
+  assert.equal((await post(tokens.orch2!, { state: 'available' })).status, 200);
+  assert.equal(svc.getAgent('orch2')!.unavailable_until, null);
+});
+
 test('kiralama: heartbeat ve task_update uzun kiralamayı kısaltmaz', async () => {
   const t = await call('orch', 'task_create', { room: 'pilot', title: 'Uzun build' });
   await call('w2', 'task_claim', { id: t.json.id, lease_minutes: 240 });

@@ -598,7 +598,9 @@ for (const p of plan) {
   else child.unref();
   team.agents.push({ name: p.name, client: p.client, role: p.role, pid: child.pid!, log, dir });
   console.log(c.ok(`✓ ${p.name}`) + c.dim(`  pid ${child.pid}  log ${log}`));
-  await new Promise((r) => setTimeout(r, p.role === 'orchestrator' ? 3000 : 1500));
+  // Agent'lar aynı anda başlamasın: aynı model hesabını paylaşan oturumların eşzamanlı OAuth yenilemesi
+  // birbirini düşürüyor. i. agent ~i*7 sn sonra başlar (+0-3 sn rastgele).
+  if (p !== plan.at(-1)) await new Promise((r) => setTimeout(r, 7000 + Math.floor(Math.random() * 3000)));
 }
 writeFileSync(prevFile, JSON.stringify(team, null, 2));
 rl.close();

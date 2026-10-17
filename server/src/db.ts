@@ -157,6 +157,10 @@ function migrate(db: DatabaseSync): void {
   if (!cols.includes('notes_at')) db.exec('ALTER TABLE rooms ADD COLUMN notes_at INTEGER');
   // Yeni iş sınırı: agent'lar odaya katılırken yalnızca bu mesajdan sonrasını görür.
   if (!cols.includes('chapter_msg')) db.exec('ALTER TABLE rooms ADD COLUMN chapter_msg INTEGER');
+  const agentCols = (db.prepare('PRAGMA table_info(agents)').all() as { name: string }[]).map((c) => c.name);
+  // Model kotası/limiti dolan agent: runner bildirir, süre dolana kadar masaya "yok" görünür.
+  if (!agentCols.includes('unavailable_until')) db.exec('ALTER TABLE agents ADD COLUMN unavailable_until INTEGER');
+  if (!agentCols.includes('unavailable_reason')) db.exec('ALTER TABLE agents ADD COLUMN unavailable_reason TEXT');
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((c) => c.name);
   // Görev alınırken istenen kiralama süresi: yenilemeler bunu kullanır (heartbeat süreyi kısaltmaz).
   if (!taskCols.includes('lease_ms')) db.exec('ALTER TABLE tasks ADD COLUMN lease_ms INTEGER');

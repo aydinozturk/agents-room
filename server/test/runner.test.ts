@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -141,4 +141,77 @@ test('SIGTERM alan runner kirli çalışma ağacını wip/<dal> dalına push ede
   assert.equal(git(wt, 'rev-parse', 'HEAD'), git(wt, 'rev-parse', 'origin/main'));
   // Temiz ana klon için wip dalı açılmaz.
   assert.equal(spawnSync('git', ['--git-dir', origin, 'rev-parse', '-q', '--verify', 'refs/heads/wip/w1/main']).status, 1);
+});
+
+/** Runner'ı durdurur (süreç grubu) ve çıkışını bekler. */
+async function stop(r: ReturnType<typeof startRunner>): Promise<void> {
+  try {
+    process.kill(-r.child.pid!, 'SIGTERM');
+  } catch {
+    /* zaten çıktı */
+  }
+  await r.exited;
+}
+
+const FAST_ENV = { AGENTS_ROOM_FAST_BACKOFF_SEC: '0', AGENTS_ROOM_SESSION_GAP_SEC: '0', AGENTS_ROOM_TRANSIENT_SEC: '1' };
+const wakeN = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `WAKE\nWHY THIS SESSION STARTED: ${tag} ${i}`);
+const lines = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).length : 0);
+
+test('0 kodla hemen biten oturumlar runner\'ı durdurmaz', { skip }, async () => {
+  const { repo } = makeRepo('ok');
+  const runs = join(tmp, 'ok-runs');
+  const bin = fakeBin('ok', `echo run >> "${runs}"; echo '{"type":"result","result":"Nothing to do"}'; exit 0`);
+  wakes = wakeN(6, 'ok');
+  const r = startRunner(repo, bin, FAST_ENV);
+  await until(() => lines(runs) >= 6, 20_000, `6 oturum açılmadı: ${r.out()}`);
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal(r.child.exitCode, null, r.out());
+  await stop(r);
+});
+
+test('art arda 5 giriş (auth) hatası runner\'ı nedeniyle birlikte durdurur', { skip }, async () => {
+  const { repo } = makeRepo('auth');
+  const bin = fakeBin('auth', `echo '{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1`);
+  wakes = wakeN(6, 'auth');
+  const r = startRunner(repo, bin, FAST_ENV);
+  const code = await Promise.race([r.exited, new Promise((res) => setTimeout(() => res('timeout'), 30_000))]);
+  assert.equal(code, 3, r.out());
+  assert.match(r.out(), /agent durduruldu/);
+  assert.match(r.out(), /Not logged in/);
+});
+
+test('OAuth yenileme hatası (geçici) sayaca girmez; oturum yeniden denenir', { skip }, async () => {
+  const { repo } = makeRepo('oauth');
+  const runs = join(tmp, 'oauth-runs');
+  // İlk deneme geçici hatayla biter, ikincisi başarılı.
+  const bin = fakeBin(
+    'oauth',
+    `echo run >> "${runs}"; if [ "$(wc -l < "${runs}")" -le 1 ]; then echo 'Error: Failed to refresh OAuth token'; exit 1; fi; echo '{"type":"result","result":"ok"}'`,
+  );
+  wakes = wakeN(1, 'oauth');
+  const r = startRunner(repo, bin, FAST_ENV);
+  await until(() => lines(runs) >= 2, 15_000, `yeniden denenmedi: ${r.out()}`);
+  assert.match(r.out(), /geçici hata/);
+  assert.doesNotMatch(r.out(), /art arda/);
+  assert.equal(r.child.exitCode, null);
+  await stop(r);
+});
+
+test('kota: runner sunucuya unavailable bildirir, çıkmaz, bekledikten sonra yeniden uyandırma ister', { skip }, async () => {
+  const { repo } = makeRepo('quota');
+  const bin = fakeBin('quota', `echo '{"type":"result","is_error":true,"result":"Spend limit reached for this organization"}'; exit 1`);
+  hits.length = 0;
+  wakes = wakeN(1, 'quota');
+  const r = startRunner(repo, bin, { ...FAST_ENV, AGENTS_ROOM_QUOTA_SEC: '1' });
+  await until(() => hits.some((h) => h.path === '/api/agent/status'), 15_000, `bildirim yok: ${r.out()}`);
+  const st = hits.find((h) => h.path === '/api/agent/status')!.body;
+  assert.equal(st.state, 'unavailable');
+  assert.match(st.reason, /quota: Spend limit reached/);
+  assert.ok(st.until > Date.now() - 5000 && st.until < Date.now() + 10_000, String(st.until));
+  // Bekleme bitince yeniden uyandırma ister (çıkmaz).
+  const n = hits.filter((h) => h.path === '/api/agent/wake').length;
+  await until(() => hits.filter((h) => h.path === '/api/agent/wake').length > n, 10_000, 'yeniden beklemeye dönmedi');
+  assert.equal(r.child.exitCode, null);
+  assert.match(r.out(), /kotası\/limiti doldu/);
+  await stop(r);
 });

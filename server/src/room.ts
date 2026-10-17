@@ -21,6 +21,8 @@ export interface Agent {
   activity: string | null;
   current_task: number | null;
   last_seen: number | null;
+  unavailable_until: number | null;
+  unavailable_reason: string | null;
   created_at: number;
 }
 
@@ -142,6 +144,8 @@ export const ONLINE_MS = 90_000; // bu süre içinde görülen agent "çevrimiç
 export const DEFAULT_LEASE_MIN = 30;
 export const CHAIR_GRACE_MS = 10 * 60_000; // başkan bu kadar sessiz kalırsa koltuk boşalır (uzun iş yapan orkestratörü düşürmemek için ONLINE_MS'ten uzun)
 export const ELECTION_SEC = 120;
+export const UNAVAILABLE_DEFAULT_MS = 30 * 60_000; // kota bildirimi süre vermezse
+const UNAVAILABLE_MAX_MS = 24 * 3600_000;
 
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -767,8 +771,10 @@ export class RoomService {
     opts: { timeoutMs: number; immediate?: boolean; signal?: AbortSignal },
   ): Promise<WakeResult | null> {
     this.touch(agentName);
-    const a = this.getAgent(agentName)!;
-    if (a.status !== 'blocked') this.setStatus(agentName, 'idle', 'waiting for work (no model session running)');
+    let a = this.getAgent(agentName)!;
+    // Kota beklemesi biten runner yeniden bekliyor: agent masaya döner.
+    if (a.unavailable_until) a = this.setAvailability(agentName, { state: 'available' });
+    if (a.status !== 'blocked' || a.activity?.startsWith('unavailable:')) this.setStatus(agentName, 'idle', 'waiting for work (no model session running)');
     const first = this.wakeCheck(agentName, room, { immediate: opts.immediate });
     if (first || opts.timeoutMs <= 0) return first;
     return new Promise<WakeResult | null>((resolve) => {
@@ -1357,7 +1363,55 @@ export class RoomService {
 
   private isOnline(name: string, withinMs = ONLINE_MS): boolean {
     const a = this.getAgent(name);
-    return !!a && !a.revoked && !!a.last_seen && now() - a.last_seen <= withinMs;
+    return !!a && !a.revoked && !!a.last_seen && now() - a.last_seen <= withinMs && !this.isUnavailable(a);
+  }
+
+  private isUnavailable(a: Agent): boolean {
+    return !!a.unavailable_until && a.unavailable_until > now();
+  }
+
+  /**
+   * Runner bildirimi: model kotası/limiti dolduğu için agent bir süre oturum açamaz (ya da yeniden açabilir).
+   * Odalara haber verilir, insanlar @bahsedilir; agent başkansa koltuk hemen çevrimiçi başka bir orkestratöre geçer.
+   */
+  setAvailability(name: string, input: { state: 'unavailable' | 'available'; reason?: string; until?: number }): Agent {
+    const a = this.getAgent(name);
+    if (!a) throw new RoomError(`Agent not found: ${name}`);
+    const rooms = this.roomsOf(name).filter((r) => !this.isClosed(r));
+    if (input.state === 'available') {
+      if (!a.unavailable_until) return a;
+      this.db.prepare('UPDATE agents SET unavailable_until = NULL, unavailable_reason = NULL WHERE name = ?').run(name);
+      for (const r of rooms) this.systemMessage(r, `✅ @${name} is back online.`);
+      this.log('agent.available', name, {});
+      for (const r of rooms) this.ensureChair(r);
+    } else {
+      const reason = (input.reason ?? 'quota').slice(0, 200);
+      const until = Math.min(Math.max(input.until ?? now() + UNAVAILABLE_DEFAULT_MS, now() + 60_000), now() + UNAVAILABLE_MAX_MS);
+      const was = this.isUnavailable(a);
+      this.db.prepare("UPDATE agents SET unavailable_until = ?, unavailable_reason = ?, status = 'blocked', activity = ? WHERE name = ?").run(until, reason, `unavailable: ${reason}`, name);
+      this.log('agent.unavailable', name, { reason, until }, 'warn');
+      if (!was) {
+        const humans = (this.db.prepare("SELECT name FROM agents WHERE role = 'admin' AND revoked = 0").all() as { name: string }[]).map((x) => x.name);
+        const at = new Date(until).toISOString().slice(11, 16);
+        for (const r of rooms) {
+          this.systemMessage(r, `⛔ @${name} is unavailable (${reason}, until ~${at} UTC); its sessions are paused. ${humans.map((h) => '@' + h).join(' ')}`.trim(), null, humans);
+        }
+      }
+      // Başkan koltuğu beklemez: çevrimiçi başka bir orkestratöre geçer.
+      for (const r of rooms) {
+        if (this.chairOf(r) !== name) continue;
+        const next = this.roomOrchestrators(r).find((o) => o !== name);
+        if (next) this.setChair(r, next, ` (@${name} is unavailable: ${reason})`, 'transfer');
+        else {
+          this.db.prepare('UPDATE rooms SET chair = NULL, chair_since = NULL, chair_by = NULL WHERE name = ?').run(r);
+          const humans = (this.db.prepare("SELECT name FROM agents WHERE role = 'admin' AND revoked = 0").all() as { name: string }[]).map((x) => x.name);
+          this.systemMessage(r, `👑 Chair @${name} is unavailable (${reason}) and no other orchestrator is online; the chair is vacant. ${humans.map((h) => '@' + h).join(' ')}`.trim(), null, humans);
+        }
+      }
+    }
+    const out = this.getAgent(name)!;
+    this.emit({ type: 'agent', data: out });
+    return out;
   }
 
   /** Masadan görüş/oy ister. Varsayılan davetliler: odadaki çevrimiçi tüm agent'lar (soran, gözlemci ve insanlar hariç). */
@@ -1496,8 +1550,10 @@ export class RoomService {
   /** Odadaki orkestratörler (katılım sırasına göre), varsayılan olarak yalnızca çevrimiçi olanlar. */
   roomOrchestrators(room: string, withinMs = ONLINE_MS): string[] {
     return (this.db
-      .prepare("SELECT m.agent FROM memberships m JOIN agents a ON a.name = m.agent WHERE m.room = ? AND a.role = 'orchestrator' AND a.revoked = 0 AND a.last_seen >= ? ORDER BY m.joined_at, m.agent")
-      .all(room, now() - withinMs) as { agent: string }[]).map((r) => r.agent);
+      .prepare(
+        "SELECT m.agent FROM memberships m JOIN agents a ON a.name = m.agent WHERE m.room = ? AND a.role = 'orchestrator' AND a.revoked = 0 AND a.last_seen >= ? AND (a.unavailable_until IS NULL OR a.unavailable_until <= ?) ORDER BY m.joined_at, m.agent",
+      )
+      .all(room, now() - withinMs, now()) as { agent: string }[]).map((r) => r.agent);
   }
 
   private setChair(room: string, name: string | null, note: string, how: 'sole' | 'election' | 'transfer' = 'sole'): void {

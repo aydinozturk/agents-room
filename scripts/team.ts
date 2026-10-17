@@ -199,17 +199,19 @@ else {
   console.log(c.dim('  Kayıt sırrı sunucu makinesindeki server/data/enroll.secret dosyasındadır.'));
   auth.secret = await ask('Kayıt sırrı');
 }
-async function enrollApi(path: string, body: Record<string, unknown>) {
+async function enrollApi(path: string, body: Record<string, unknown>, ownToken?: string | null) {
+  // Var olan bir agent'ın token'ını sunucu yalnız admin'e ya da agent'ın kendisine (eski token'ıyla) yeniletir.
+  const bearer = auth.adminToken ?? ownToken;
   const r = await fetch(server + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(auth.adminToken ? { Authorization: `Bearer ${auth.adminToken}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
     body: JSON.stringify({ ...body, ...(auth.secret ? { secret: auth.secret } : {}) }),
   });
   const j = (await r.json().catch(() => ({}))) as any;
   if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
   return j;
 }
-let info: { rooms: { name: string; topic: string | null; repo: string | null; members: number; open_tasks: number; closed?: boolean }[]; agents: { name: string; role: string; status: string; machine: string | null }[] };
+let info: { rooms: { name: string; topic: string | null; repo: string | null; members: number; open_tasks: number; closed?: boolean }[]; agents: { name: string; role: string; status: string; machine: string | null }[]; names?: string[] };
 try {
   info = await enrollApi('/api/enroll/info', {});
 } catch (e) {
@@ -340,7 +342,14 @@ const NAME_POOL = [
   'lara', 'yusuf', 'irem', 'ozan', 'ceren', 'tuna', 'melis', 'kerem', 'asli', 'bora', 'sude', 'alp', 'pelin', 'onur', 'derya',
   'umut', 'ela', 'cem', 'naz', 'baris', 'yagmur', 'koray', 'duru', 'sarp', 'ilgaz', 'mira', 'tolga', 'beren', 'aras', 'gizem',
 ];
-const taken = new Set(info.agents.map((a) => a.name));
+const taken = new Set(info.names ?? info.agents.map((a) => a.name)); // names: iptal edilenler dahil tüm kayıtlı adlar
+/** Bu makinede daha önce bu agent için alınmış token (teams/<oda>/<ad>.env). */
+function storedToken(name: string): string | null {
+  const f = join(SECRETS, room, `${name}.env`);
+  if (!existsSync(f)) return null;
+  const m = readFileSync(f, 'utf8').match(/^export AGENTS_ROOM_TOKEN='([^']*)'$/m);
+  return m ? m[1]! : null;
+}
 const goal = orchCount ? (opt.goal ?? (await ask('Orkestratöre ilk hedef (boş = panelden yazacağım)', ''))) : '';
 const sessions = Number(opt.sessions ?? 20); // saatte en fazla oturum (agent başına); 0 = sınırsız
 const roles: { client: Client; role: 'orchestrator' | 'worker' }[] = [];
@@ -378,6 +387,20 @@ const plan = roles.map((r, i) => ({ name: names[i]!, ...r }));
 const clash = plan.filter((p) => taken.has(p.name) && !reused.has(p.name) && info.agents.find((a) => a.name === p.name)!.status !== 'offline');
 if (clash.length) fail(`Şu adlar şu an çevrimiçi başka agent'larda kullanılıyor: ${clash.map((p) => p.name).join(', ')}. --names ile başka isimler verin.`);
 if (new Set(names).size !== names.length) fail('Agent adları benzersiz olmalı');
+// Sunucuda kayıtlı bir adın token'ı yalnız agent'ın kendi eski token'ı ya da admin ile yenilenir. Bu makinede token'ı
+// olmayan dolu adlar: kendi verdiğiniz adlarsa durulur, otomatik seçilenler boştaki bir adla değiştirilir.
+if (!auth.adminToken) {
+  const orphan = plan.filter((p) => taken.has(p.name) && !storedToken(p.name));
+  if (orphan.length && (opt.names || opt.prefix)) {
+    fail(`Şu adlar sunucuda zaten kayıtlı ve bu makinede token'ları yok: ${orphan.map((p) => p.name).join(', ')}. Başka adlar verin ya da panelden admin olarak token'larını yenileyin.`);
+  }
+  for (const p of orphan) {
+    const free = NAME_POOL.find((n) => !taken.has(n) && !plan.some((q) => q.name === n)) ?? `agent-${Date.now() % 100000}`;
+    console.log(c.warn(`  ⚠️  ${p.name} sunucuda kayıtlı ama bu makinede token'ı yok; yerine ${free} kullanılacak.`));
+    reused.delete(p.name);
+    p.name = free;
+  }
+}
 
 console.log(c.b('\nÖzet'));
 console.log(`  oda:   ${room}${existing ? '' : ' (yeni)'}  ${topic ? c.dim(topic) : ''}`);
@@ -549,7 +572,7 @@ for (const p of plan) {
       topic,
       repo,
       reopen,
-    });
+    }, storedToken(p.name));
   } catch (e) {
     fail(`${p.name} kaydedilemedi: ${(e as Error).message}`);
   }

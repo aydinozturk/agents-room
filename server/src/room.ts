@@ -247,21 +247,22 @@ export class RoomService {
     role?: AgentRole;
     capabilities?: string[];
     machine?: string;
-  }): { agent: Agent; token: string } {
+  }): { agent: Agent; token: string; rotated: boolean } {
     assertName(input.name, 'agent name');
     const token = newToken();
     const existing = this.db.prepare('SELECT id FROM agents WHERE name = ?').get(input.name);
     if (existing) {
-      // Aynı isim için yeni token üret (rotasyon); eski token geçersizleşir.
+      // Aynı isim için yeni token üret (rotasyon); eski token geçersizleşir. Verilmeyen alanlar korunur
+      // (rol belirtmeden yeniden kayıt orkestratörü işçiye çevirmesin).
       this.db
         .prepare(
-          'UPDATE agents SET token_hash = ?, revoked = 0, kind = ?, role = ?, capabilities = ?, machine = COALESCE(?, machine) WHERE name = ?',
+          'UPDATE agents SET token_hash = ?, revoked = 0, kind = COALESCE(?, kind), role = COALESCE(?, role), capabilities = COALESCE(?, capabilities), machine = COALESCE(?, machine) WHERE name = ?',
         )
         .run(
           hashToken(token),
-          input.kind ?? 'other',
-          input.role ?? 'worker',
-          JSON.stringify(input.capabilities ?? []),
+          input.kind ?? null,
+          input.role ?? null,
+          input.capabilities ? JSON.stringify(input.capabilities) : null,
           input.machine ?? null,
           input.name,
         );
@@ -280,8 +281,8 @@ export class RoomService {
           now(),
         );
     }
-    this.log('agent.token_issued', input.name, { kind: input.kind, role: input.role });
-    return { agent: this.getAgent(input.name)!, token };
+    this.log('agent.token_issued', input.name, { kind: input.kind, role: input.role, rotated: !!existing });
+    return { agent: this.getAgent(input.name)!, token, rotated: !!existing };
   }
 
   revokeAgent(name: string): void {

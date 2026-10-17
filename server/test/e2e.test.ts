@@ -463,6 +463,45 @@ test('kayıt (enroll): sır kontrolü, oda oluşturma, bilgi ucu', async () => {
   assert.doesNotMatch(JSON.stringify(info), /token/);
 });
 
+test("kayıt (enroll): var olan isim yalnız kendi token'ı ya da admin ile yenilenir, rol korunur", async () => {
+  const post = (body: unknown, token?: string) =>
+    fetch(base + '/api/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ secret: 'test-secret', ...(body as object) }),
+    });
+  const first = await post({ name: 'kimlik-orch', kind: 'claude-code', role: 'orchestrator', capabilities: ['planning'] });
+  assert.equal(first.status, 200);
+  const t1 = ((await first.json()) as any).token as string;
+
+  // Yalnız kayıt sırrıyla var olan isim alınamaz; eski token geçerli kalır.
+  const steal = await post({ name: 'kimlik-orch', role: 'worker' });
+  assert.equal(steal.status, 409);
+  assert.ok(svc.authenticate(t1));
+  // Başka bir agent'ın token'ı da yetmez.
+  assert.equal((await post({ name: 'kimlik-orch' }, tokens.w1)).status, 409);
+
+  // Kendi token'ıyla yenileme: rol ve yetenekler korunur, eski token geçersizleşir.
+  const self = await post({ name: 'kimlik-orch', kind: 'claude-code', role: 'worker' }, t1);
+  assert.equal(self.status, 200);
+  const j = (await self.json()) as any;
+  assert.equal(j.agent.role, 'orchestrator');
+  assert.deepEqual(j.agent.capabilities, ['planning']);
+  assert.equal(svc.authenticate(t1), null);
+  assert.ok(svc.authenticate(j.token));
+  // Rol vermeden yenileme de orkestratörü işçiye çevirmez.
+  const self2 = await post({ name: 'kimlik-orch' }, j.token);
+  assert.equal(((await self2.json()) as any).agent.role, 'orchestrator');
+
+  // Admin her ismi yenileyebilir ve rolü değiştirebilir.
+  const adm = await fetch(base + '/api/enroll', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ name: 'kimlik-orch', role: 'worker' }) });
+  assert.equal(adm.status, 200);
+  assert.equal(((await adm.json()) as any).agent.role, 'worker');
+  const rotations = (svc.recentEvents({ level: 'warn', limit: 50 }) as any[]).filter((e) => e.type === 'agent.token_rotated' && e.agent === 'kimlik-orch');
+  assert.equal(rotations.length, 3);
+  assert.doesNotMatch(JSON.stringify(rotations), /ar_/);
+});
+
 test('istişare: davet, gelen kutusu notu, oylama doğrulaması, bekleme, karar ve plana bağlama', async () => {
   svc.createRoom('istisare', 'fikir alışverişi', null, 'admin');
   for (const n of ['orch', 'w1', 'w2']) await call(n, 'room_join', { room: 'istisare' });

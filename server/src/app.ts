@@ -156,6 +156,8 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
     res.json({
       rooms: (svc.listRooms({ includeClosed: true }) as Record<string, unknown>[]).map((r) => ({ name: r.name, topic: r.topic, repo: r.repo, members: r.members, open_tasks: r.open_tasks, closed: !!r.closed_at })),
       agents: svc.listAgents().map((a) => ({ name: a.name, kind: a.kind, role: a.role, status: a.status, machine: a.machine })),
+      // İptal edilenler dahil dolu adlar: yeni kurulum bunları seçmesin (sırla yeniden kaydedilemezler).
+      names: (svc.db.prepare('SELECT name FROM agents').all() as { name: string }[]).map((r) => r.name),
     });
   });
 
@@ -164,6 +166,15 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
     if (role === 'admin') return res.status(403).json({ error: 'admin rolü kayıtla alınamaz' });
     const existing = typeof name === 'string' ? svc.getAgent(name) : null;
     if (existing && existing.role === 'admin') return res.status(403).json({ error: 'Bu isim korunuyor' });
+    // Var olan bir ismin token'ını yalnız admin ya da agent'ın kendisi (geçerli token'ıyla) yeniler:
+    // kayıt sırrını bilen herkes başka bir agent'ın kimliğini alıp onu dışarıda bırakamasın.
+    const bearer = readToken(req);
+    const caller = bearer ? svc.authenticate(bearer) : null;
+    const byAdmin = caller?.role === 'admin';
+    if (existing && !byAdmin && caller?.name !== existing.name) {
+      svc.log('enroll.name_taken', existing.name, { ip: req.ip }, 'warn');
+      return res.status(409).json({ error: `"${existing.name}" adlı agent zaten kayıtlı; token'ını yalnız bir admin ya da agent'ın kendisi yenileyebilir (agent exists; ask an admin to rotate)` });
+    }
     try {
       // İstenen oda yoksa oluşturulur; varsa konu/repo yalnızca boşsa doldurulur.
       let roomInfo: unknown = null;
@@ -177,13 +188,16 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
         else if ((!cur.repo && repo) || (!cur.topic && topic)) svc.createRoom(room, cur.topic ? null : (topic ?? null), cur.repo ? null : (repo ?? null), String(name));
         roomInfo = svc.getRoom(room);
       }
+      const wantRole: AgentRole | undefined = role === 'orchestrator' || role === 'observer' || role === 'worker' ? role : undefined;
       const r = svc.createAgent({
         name,
-        kind: (kind as AgentKind) ?? 'other',
-        role: role === 'orchestrator' || role === 'observer' ? role : 'worker',
-        capabilities: Array.isArray(capabilities) ? capabilities.map(String) : [],
+        kind: typeof kind === 'string' ? (kind as AgentKind) : existing ? undefined : 'other',
+        // Rol değişimi yalnız admin isteğiyle; agent kendi token'ını yenilerken rolü korunur.
+        role: existing && !byAdmin ? undefined : (wantRole ?? (existing ? undefined : 'worker')),
+        capabilities: Array.isArray(capabilities) ? capabilities.map(String) : existing ? undefined : [],
         machine: typeof machine === 'string' ? machine : undefined,
       });
+      if (r.rotated) svc.log('agent.token_rotated', r.agent.name, { by: caller?.name ?? 'secret', ip: req.ip }, 'warn');
       res.json({ agent: r.agent, token: r.token, room: roomInfo });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -236,7 +250,11 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
   app.post('/api/tasks', auth(['admin', 'orchestrator']), wrap((req) => svc.createTask(req.agent!.name, req.body)));
   app.post('/api/tasks/:id/review', auth(['admin', 'orchestrator']), wrap((req) => svc.review(req.agent!.name, Number(req.params.id), req.body)));
   app.get('/api/tasks/:id/tree', panel, wrap((req) => svc.tree(Number(req.params.id))));
-  app.post('/api/agents', auth(['admin']), wrap((req) => svc.createAgent(req.body)));
+  app.post('/api/agents', auth(['admin']), wrap((req) => {
+    const r = svc.createAgent(req.body);
+    if (r.rotated) svc.log('agent.token_rotated', r.agent.name, { by: req.agent!.name, ip: req.ip }, 'warn');
+    return r;
+  }));
   app.delete('/api/agents/:name', auth(['admin']), wrap((req) => {
     svc.revokeAgent(String(req.params.name));
     return { revoked: req.params.name };

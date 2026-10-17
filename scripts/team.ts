@@ -19,17 +19,19 @@
 //                        --names elif,mert,...  (kendi isimleriniz)  |  --prefix mac2 (isim yerine önekli adlar)
 import { createInterface } from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, readdirSync, appendFileSync, symlinkSync, rmSync, createWriteStream } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, readdirSync, appendFileSync, symlinkSync, rmSync, createWriteStream, chownSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { type GitAuth, cacheReady, cloneFromCache, cloneRepo, expandHome, githubPushAccess, githubSlug, gitEnv, isHttps, isSsh, normalizeRepo, probeRepo, refreshWorkspace, seedEmptyRepo, syncCache, workspaceReady } from './git-auth.ts';
+import { type GitAuth, cacheReady, cloneFromCache, cloneRepo, expandHome, githubPushAccess, githubSlug, gitEnv, gitLong, isHttps, isSsh, normalizeRepo, probeRepo, refreshWorkspace, seedEmptyRepo, syncCache, workspaceReady } from './git-auth.ts';
+import { type AgentUser, agentUsersUnavailable, baseEnv, ensureAgentUser, giveTree, prepareHome, runAs } from './agent-users.ts';
+import { type GitProxy, startGitProxy } from './git-proxy.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKSPACES = process.env.AGENTS_ROOM_WORKSPACES ? resolve(process.env.AGENTS_ROOM_WORKSPACES) : join(ROOT, 'workspaces');
 // Agent kimlikleri (MCP ve git token'ları) çalışma alanının dışında tutulur: agent'lar çalışma alanını okuyabilir.
-const SECRETS = join(homedir(), '.config', 'agents-room', 'teams');
+const SECRETS = process.env.AGENTS_ROOM_SECRETS ? resolve(process.env.AGENTS_ROOM_SECRETS) : join(homedir(), '.config', 'agents-room', 'teams');
 const DATA = join(ROOT, 'server', 'data');
 type Client = 'claude' | 'hermes' | 'codex' | 'gemini';
 const CLIENTS: Client[] = ['claude', 'hermes', 'codex', 'gemini'];
@@ -425,6 +427,33 @@ if (repo && repoEmpty) {
   console.log(c.ok(`✓ boş repoya ilk commit atıldı (${baseBranch})`));
 }
 
+// Agent başına Linux kullanıcısı (konteyner, entrypoint karar verir: AGENTS_ROOM_AGENT_USERS=1). Açılamıyorsa durulur:
+// root olarak ortak kullanıcı moduna düşmek agent'ları root yapardı.
+const iso = process.env.AGENTS_ROOM_AGENT_USERS === '1';
+if (iso) {
+  const why =
+    agentUsersUnavailable() ??
+    (!opt.foreground ? 'yalnız --foreground ile çalışır (git vekili bu süreçle yaşar)' : null) ??
+    (!repo || (!isHttps(repo) && !isSsh(repo)) ? 'odanın reposu yerel bir yol; ortak bir git adresi gerekli' : null) ??
+    (plan.some((p) => p.client === 'hermes') ? 'Hermes agent kullanıcılarıyla desteklenmiyor' : null);
+  if (why) fail(`Agent kullanıcıları açılamadı: ${why}.\n  Ortak kullanıcıyla çalışmak için AGENTS_ROOM_AGENT_USERS=off verin.`);
+  console.log(c.ok('✓ her agent kendi Linux kullanıcısıyla çalışacak') + c.dim(gitAuth.kind === 'token' ? '  (repo anahtarı agent\'lara verilmez, git vekili)' : gitAuth.kind === 'ssh' ? '  (SSH anahtarı agent\'lardan gizlenemez; tam yalıtım için token kullanın)' : ''));
+}
+const AGENT_HOMES = process.env.AGENTS_ROOM_AGENT_HOMES ? resolve(process.env.AGENTS_ROOM_AGENT_HOMES) : join(dirname(WORKSPACES), 'agents');
+const users = new Map<string, AgentUser>();
+if (iso) {
+  mkdirSync(join(AGENT_HOMES, room), { recursive: true, mode: 0o755 });
+  for (const p of plan) users.set(p.name, ensureAgentUser(p.name, join(AGENT_HOMES, room, p.name)));
+}
+/** Sırlar klasörüne root yazdıysa dosyaları klasörün sahibine verir (ortak kullanıcı modunda da okunabilsin). */
+function ownLikeSecrets(path: string): void {
+  if (process.getuid?.() !== 0 || !existsSync(SECRETS)) return;
+  const st = statSync(SECRETS);
+  chownSync(path, st.uid, st.gid);
+}
+// Agent süreçlerine asla geçmeyen değişkenler (agent kullanıcıları modunda).
+const NOT_FOR_AGENTS = ['AGENTS_ROOM_ENROLL_SECRET', 'AGENTS_ROOM_GIT_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'AGENTS_ROOM_SSH_KEY', 'AGENTS_ROOM_SECRETS', 'AGENTS_ROOM_AGENT_USERS', 'AGENTS_ROOM_AGENT_HOMES', 'MAIL', 'SUDO_USER', 'SUDO_UID', 'SUDO_GID', 'SUDO_COMMAND'];
+
 // Hermes profili (gerekirse)
 const usesHermes = plan.some((p) => p.client === 'hermes');
 if (usesHermes) {
@@ -445,7 +474,7 @@ if (usesHermes) {
 }
 
 // Gemini ve Codex skill'i ~/.agents/skills altından okur.
-if (plan.some((p) => p.client === 'gemini' || p.client === 'codex')) {
+if (!iso && plan.some((p) => p.client === 'gemini' || p.client === 'codex')) {
   const dir = join(homedir(), '.agents', 'skills');
   mkdirSync(dir, { recursive: true });
   if (!existsSync(join(dir, 'agents-room'))) symlinkSync(join(ROOT, 'skills', 'agents-room'), join(dir, 'agents-room'));
@@ -468,6 +497,12 @@ if (!repo) {
     spawnSync('rm', ['-rf', seed]);
   }
   repo = bare;
+}
+
+// Git vekili: agent'lar ortak repoya anahtarsız, bu süreç üzerinden erişir.
+let proxy: GitProxy | null = null;
+if (iso && gitAuth.kind === 'token' && repo) {
+  proxy = await startGitProxy({ repoUrl: repo, token: gitAuth.token, port: Number(process.env.AGENTS_ROOM_GIT_PROXY_PORT) || 0 });
 }
 
 // Ön plan modu: çıktı log dosyasına yazılır; oturum başlangıç/bitiş satırları ekrana da düşer.
@@ -537,6 +572,8 @@ if (remoteRepo) {
     }
   });
   if (!r.ok) fail(`Repo indirilemedi (${repo}): ${r.error}\n  Bu makinenin repoya erişimi (anahtar/ağ) olmalı. Takılma süresi: AGENTS_ROOM_GIT_STALL_SEC (varsayılan 300).`);
+  // Agent kopyaları önbelleğin nesnelerini alternates ile okur: önbellek nesne silmesin.
+  if (iso) spawnSync('git', ['-C', CACHE, 'config', 'gc.auto', '0']);
   console.log(c.ok(`  ✓ repo hazır`) + c.dim(` (${Math.round((Date.now() - t0) / 1000)} sn${lastLine && fresh ? ', ' + lastLine.slice(0, 80) : ''})`));
 }
 
@@ -554,7 +591,7 @@ if (missingWs.length) {
   const results = await Promise.all(
     missingWs.map(async (p) => {
       const dir = join(WS, p.name);
-      const r = remoteRepo ? await cloneFromCache(repo, CACHE, dir, gitAuth, (l) => latest.set(p.name, l)) : cloneRepo(repo, dir, gitAuth);
+      const r = remoteRepo ? await cloneFromCache(repo, CACHE, dir, gitAuth, (l) => latest.set(p.name, l), iso) : cloneRepo(repo, dir, gitAuth);
       if (r.ok) freshDirs.add(dir);
       return { name: p.name, ...r };
     }),
@@ -583,21 +620,58 @@ for (const p of plan) {
     fail(`${p.name} kaydedilemedi: ${(e as Error).message}`);
   }
   const dir = join(WS, p.name);
-  if (!freshDirs.has(dir)) {
-    const r = await refreshWorkspace(dir, gitAuth, repo);
-    if (!r.ok) console.log(c.warn(`  ⚠️  ${p.name}: repo güncellenemedi (${r.error}); mevcut kopyayla devam ediliyor.`));
+  const u = users.get(p.name);
+  let isoEnv: Record<string, string> = {};
+  if (u) {
+    // Kopya agent'ındır; root bundan sonra içinde git çalıştırmaz (repo ayarları agent'ın denetiminde).
+    giveTree(dir, u);
+    const home = prepareHome(u, { skill: join(ROOT, 'skills', 'agents-room'), codex: p.client === 'codex', sshKey: gitAuth.kind === 'ssh' ? gitAuth.sshKey : undefined });
+    const sshEnv: Record<string, string> = home.sshKey ? { GIT_SSH_COMMAND: gitEnv({ kind: 'ssh', sshKey: home.sshKey }).GIT_SSH_COMMAND! } : {};
+    const g = (...a: string[]) => runAs(u, 'git', ['-C', dir, ...a]);
+    for (const line of String(g('config', '--local', '--get-regexp', '^url\\..*\\.insteadof$').stdout).split('\n')) {
+      const section = line.split(' ')[0]!.replace(/\.insteadof$/i, '');
+      if (section.startsWith('url.http://127.0.0.1:')) g('config', '--local', '--remove-section', section);
+    }
+    g('config', '--local', '--unset-all', 'credential.helper');
+    g('config', '--local', '--unset-all', 'core.sshCommand');
+    if (proxy) g('config', '--local', '--add', `url.${proxy.gitUrl}.insteadOf`, repo);
+    if (sshEnv.GIT_SSH_COMMAND) g('config', '--local', 'core.sshCommand', sshEnv.GIT_SSH_COMMAND);
+    if (!freshDirs.has(dir)) {
+      const r = await gitLong(['-C', dir, 'fetch', '--progress', 'origin'], { auth: { kind: 'none' }, as: { uid: u.uid, gid: u.gid, env: { ...baseEnv(u), ...sshEnv } } });
+      if (!r.ok) console.log(c.warn(`  ⚠️  ${p.name}: repo güncellenemedi (${r.error}); mevcut kopyayla devam ediliyor.`));
+    }
+    g('config', 'user.name', p.name);
+    g('config', 'user.email', `${p.name}@agents-room.local`);
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => v !== undefined && !NOT_FOR_AGENTS.includes(k))) as Record<string, string>;
+    isoEnv = {
+      ...inherited,
+      ...baseEnv(u),
+      ...sshEnv,
+      AGENTS_ROOM_ISOLATED: '1',
+      AGENTS_ROOM_LOGDIR: home.logs,
+      AGENTS_ROOM_WORKTREE_DIR: home.worktrees,
+      ...(proxy?.apiUrl ? { AGENTS_ROOM_GITHUB_API: proxy.apiUrl } : {}),
+    };
+  } else {
+    if (!freshDirs.has(dir)) {
+      const r = await refreshWorkspace(dir, gitAuth, repo);
+      if (!r.ok) console.log(c.warn(`  ⚠️  ${p.name}: repo güncellenemedi (${r.error}); mevcut kopyayla devam ediliyor.`));
+    }
+    spawnSync('git', ['-C', dir, 'config', 'user.name', p.name]);
+    spawnSync('git', ['-C', dir, 'config', 'user.email', `${p.name}@agents-room.local`]);
   }
-  spawnSync('git', ['-C', dir, 'config', 'user.name', p.name]);
-  spawnSync('git', ['-C', dir, 'config', 'user.email', `${p.name}@agents-room.local`]);
   const agentEnv: Record<string, string> = {
     AGENTS_ROOM_URL: server + '/mcp',
     AGENTS_ROOM_TOKEN: enr.token,
     AGENTS_ROOM_BASE_BRANCH: baseBranch,
-    ...gitEnv(gitAuth, repo),
+    // Agent kullanıcıları modunda repo anahtarı agent'a verilmez (git vekili).
+    ...(u ? { GIT_TERMINAL_PROMPT: '0' } : gitEnv(gitAuth, repo)),
   };
   // Elle yeniden başlatmak için: source ~/.config/agents-room/teams/<oda>/<ad>.env
   mkdirSync(join(SECRETS, room), { recursive: true, mode: 0o700 });
   writeFileSync(join(SECRETS, room, `${p.name}.env`), Object.entries(agentEnv).map(([k, v]) => `export ${k}=${shq(v)}\n`).join(''), { mode: 0o600 });
+  ownLikeSecrets(join(SECRETS, room));
+  ownLikeSecrets(join(SECRETS, room, `${p.name}.env`));
   if (existsSync(join(WS, `${p.name}.env`))) rmSync(join(WS, `${p.name}.env`)); // eski sürümün çalışma alanına yazdığı kimlik dosyası
 
   const log = join(WS, 'logs', `${p.name}.log`);
@@ -616,12 +690,15 @@ for (const p of plan) {
     cwd: ROOT,
     detached: true,
     stdio: opt.foreground ? ['ignore', 'pipe', 'pipe'] : ['ignore', fd, fd],
-    env: {
-      ...agentProcessEnv(),
-      ...agentEnv,
-      AGENTS_ROOM_LOGDIR: join(WS, 'logs'),
-      ...(p.client === 'hermes' ? { HERMES_PROFILE: 'agentsroom' } : {}),
-    },
+    env: u
+      ? { ...isoEnv, ...agentEnv }
+      : {
+          ...agentProcessEnv(),
+          ...agentEnv,
+          AGENTS_ROOM_LOGDIR: join(WS, 'logs'),
+          ...(p.client === 'hermes' ? { HERMES_PROFILE: 'agentsroom' } : {}),
+        },
+    ...(u ? { uid: u.uid, gid: u.gid } : {}),
   });
   if (opt.foreground) followChild(p.name, child, log);
   else child.unref();

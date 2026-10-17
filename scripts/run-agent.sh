@@ -32,6 +32,9 @@ done
 [[ -f "$HOME/.config/agents-room/env" && -z "${AGENTS_ROOM_TOKEN:-}" ]] && source "$HOME/.config/agents-room/env"
 # Kayıt sırrı agent'ın işi değil: model oturumlarına ve onların kabuklarına geçmesin.
 unset AGENTS_ROOM_ENROLL_SECRET
+# Agent kendi kullanıcısıyla çalışıyorsa (konteyner, team.ts) yazdığı her şey yalnız ona açık olsun.
+ISOLATED="${AGENTS_ROOM_ISOLATED:-0}"
+[[ "$ISOLATED" == 1 ]] && umask 077
 : "${AGENTS_ROOM_URL:?AGENTS_ROOM_URL gerekli}" "${AGENTS_ROOM_TOKEN:?AGENTS_ROOM_TOKEN gerekli}"
 [[ -n "$CLIENT" ]] || { echo "--client gerekli" >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,9 +71,16 @@ fi
 [[ -n "$CONTEXT" ]] && PROMPT+="
 $CONTEXT"
 BASE="${AGENTS_ROOM_BASE_BRANCH:-main}"
+# Görev worktree'lerinin klasörü (agent kullanıcıları modunda agent'ın kendi HOME'unda; yoksa repo kopyasının yanında).
+WT_DIR="${AGENTS_ROOM_WORKTREE_DIR:-$(dirname "$REPO")}"
 GIT_NOTE="
 SHARED REPO: the base branch is \"$BASE\" (use it wherever the git rules say main). git fetch/pull/push to origin is already authenticated for you; never print, echo, log or commit credentials or environment variables."
-if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
+[[ -n "${AGENTS_ROOM_WORKTREE_DIR:-}" ]] && GIT_NOTE+=" Create task worktrees under $WT_DIR instead of next to the repo: git worktree add $WT_DIR/<repo>-<you>-t<ID> -b <branch> origin/$BASE."
+if [[ -n "${AGENTS_ROOM_GITHUB_API:-}" ]]; then
+  # Agent'ta GitHub token'ı yok: PR'lar yerel vekilden (yalnız bu reponun pulls/issues API'si) açılır.
+  GIT_NOTE+=" Open one PR per task through the local GitHub proxy (it adds the credentials; gh is not configured): curl -s -X POST \"\$AGENTS_ROOM_GITHUB_API/pulls\" -H 'content-type: application/json' -d '{\"title\":\"[#<ID>] <title>\",\"head\":\"<branch>\",\"base\":\"$BASE\",\"body\":\"<summary>\"}' (read its html_url and add it to the task_complete artifacts). GET \$AGENTS_ROOM_GITHUB_API/pulls?head=<owner>:<branch> lists existing PRs."
+  GH_CLAUDE=("Bash(curl:*)"); GH_GEMINI=",run_shell_command(curl)"
+elif command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
   GIT_NOTE+=" The GitHub CLI is available: open one PR per task with gh pr create --base $BASE (title \"[#<ID>] <title>\") and add its URL to the task_complete artifacts."
   GH_CLAUDE=("Bash(gh:*)"); GH_GEMINI=",run_shell_command(gh)"
 else
@@ -139,7 +149,10 @@ in_container() { [[ "${AGENTS_ROOM_IN_DOCKER:-0}" == 1 || -f /.dockerenv || -f /
 PERMS="${AGENTS_ROOM_PERMISSIONS:-}"
 [[ -z "$PERMS" ]] && { in_container && PERMS=full || PERMS=restricted; }
 [[ "$PERMS" == full || "$PERMS" == restricted ]] || { echo "AGENTS_ROOM_PERMISSIONS: full ya da restricted olmalı (verilen: $PERMS)" >&2; exit 2; }
-if [[ "$PERMS" == full ]]; then
+if [[ "$PERMS" == full && "$ISOLATED" == 1 ]]; then
+  PROMPT+="
+PERMISSIONS: you run inside a dedicated container as your own unprivileged user: every shell command runs without approval (curl, python3, jq…), but there is no sudo and you cannot read other agents' files. Install what a task needs in user space (pip install --user or a python3 -m venv, npm install in the project). Your files are private to you; never print, log or commit tokens or keys."
+elif [[ "$PERMS" == full ]]; then
   PROMPT+="
 PERMISSIONS: you run inside a dedicated container with full permissions: every shell command runs without approval (curl, python3, jq, package managers…), and sudo works without a password (e.g. sudo apt-get install -y <pkg>). Use them when the task needs it; no human approval step is required. The rule about credentials still holds: never print, log or commit tokens or keys."
 fi
@@ -183,7 +196,7 @@ EOF
       fi
       MCP_TOOL_TIMEOUT=120000 claude -p "$SESSION_PROMPT" \
         --mcp-config "$CFG" --strict-mcp-config \
-        --add-dir "$SKILL" "$(dirname "$REPO")" \
+        --add-dir "$SKILL" "$(dirname "$REPO")" "$WT_DIR" \
         "${PERM_ARGS[@]}" \
         ${MODEL:+--model "$MODEL"} ${EFFORT:+--effort "$EFFORT"} \
         --output-format stream-json --verbose ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
@@ -214,7 +227,7 @@ EOF
         PERM_ARGS=(--dangerously-bypass-approvals-and-sandbox -c 'shell_environment_policy.inherit="all"' -c 'shell_environment_policy.ignore_default_excludes=true')
       else
         PERM_ARGS=(--sandbox "$CODEX_SANDBOX" -c 'sandbox_workspace_write.network_access=true' -c 'shell_environment_policy.ignore_default_excludes=true'
-          -c 'shell_environment_policy.include_only=["PATH","HOME","USER","LANG","LC_*","TERM","TMPDIR","SHELL","AGENTS_ROOM_GIT_TOKEN","AGENTS_ROOM_BASE_BRANCH","GH_TOKEN","GIT_SSH_COMMAND","GIT_TERMINAL_PROMPT"]')
+          -c 'shell_environment_policy.include_only=["PATH","HOME","USER","LANG","LC_*","TERM","TMPDIR","SHELL","AGENTS_ROOM_GIT_TOKEN","AGENTS_ROOM_BASE_BRANCH","GH_TOKEN","AGENTS_ROOM_GITHUB_API","GIT_SSH_COMMAND","GIT_TERMINAL_PROMPT"]')
       fi
       codex exec --json "${PERM_ARGS[@]}" \
         -c "mcp_servers.agents-room.url=\"$AGENTS_ROOM_URL\"" \
@@ -251,7 +264,7 @@ JSON
       gemini -p "$SESSION_PROMPT" \
         "${PERM_ARGS[@]}" \
         --allowed-mcp-server-names agents-room \
-        --include-directories "$SKILL,$(dirname "$REPO")" \
+        --include-directories "$SKILL,$(dirname "$REPO"),$WT_DIR" \
         ${MODEL:+-m "$MODEL"} \
         --output-format stream-json ${EXTRA[@]+"${EXTRA[@]}"} < /dev/null | tee "$LOG" >/dev/null
       RC=${PIPESTATUS[0]}

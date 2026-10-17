@@ -14,13 +14,19 @@ LAST_ERR=""
 trap 'LAST_ERR="satır $LINENO: $BASH_COMMAND"' ERR
 trap 'rc=$?; if [[ $rc != 0 && -n "$LAST_ERR" ]]; then echo "agents-room: hata (kod $rc, $LAST_ERR)" >&2; fi' EXIT
 
+# Konteyner root olarak açılır: agent başına Linux kullanıcısı yalnız root'la açılabilir. Bunun dışındaki her komut
+# (setup, login, status, shell) ve ortak kullanıcı modundaki ekip "node" kullanıcısıyla çalışır.
+as_node() { exec setpriv --reuid=node --regid=node --init-groups env HOME=/home/node USER=node LOGNAME=node "$@"; }
+if [[ $(id -u) == 0 && "${1:-start}" != start ]]; then as_node "$0" "$@"; fi
+
 CONFIG=/data/agents-room.env
 TEAM=/opt/agents-room/scripts/team.ts
 KEYS=(AGENTS_ROOM_SERVER AGENTS_ROOM_ENROLL_SECRET AGENTS_ROOM_ROOM AGENTS_ROOM_TOPIC AGENTS_ROOM_REPO
   AGENTS_ROOM_GIT_TOKEN AGENTS_ROOM_SSH_KEY REOPEN_ROOM ORCHESTRATORS ORCH_CLIENTS CLAUDE_WORKERS CODEX_WORKERS
   GEMINI_WORKERS HERMES_WORKERS AGENTS_ROOM_GOAL AGENT_NAMES AGENT_PREFIX SESSIONS
   CLAUDE_MODEL CLAUDE_EFFORT CODEX_MODEL CODEX_EFFORT GEMINI_MODEL CLAUDE_ALLOWED_TOOLS AGENTS_ROOM_PERMISSIONS
-  CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY HERMES_BASE_URL HERMES_MODEL HERMES_API_KEY)
+  CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY HERMES_BASE_URL HERMES_MODEL HERMES_API_KEY
+  AGENTS_ROOM_AGENT_USERS)
 SECRET_KEYS=" AGENTS_ROOM_ENROLL_SECRET AGENTS_ROOM_GIT_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY HERMES_API_KEY "
 COMPOSE_HINT="docker compose -f docker/compose.yaml"
 
@@ -230,6 +236,48 @@ prepare_clients() {
   fi
 }
 
+# Agent'lar ayrı Linux kullanıcılarıyla mı çalışacak? auto: ekipteki her platformun girişi ortamdan geliyorsa evet.
+# Tarayıcı girişi dosyaları (~/.claude/.credentials.json, ~/.codex/auth.json) kullanıcılar arasında paylaşılamaz:
+# Claude dosyayı her yenilemede 0600 yazar ve sembolik bağlantıyı reddeder, OAuth yenileme anahtarları da tek kullanımlıktır.
+agent_users_mode() {
+  local m="${AGENTS_ROOM_AGENT_USERS:-auto}" miss=()
+  case "$m" in
+    off|0|false|no) echo off; return ;;
+    on|1|true|yes) echo on; return ;;
+  esac
+  if uses claude "${CLAUDE_WORKERS:-0}" && [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]]; then
+    miss+=("Claude: CLAUDE_CODE_OAUTH_TOKEN (bir kez: docker exec -it -u node $(hostname) claude setup-token) ya da ANTHROPIC_API_KEY")
+  fi
+  if uses codex "${CODEX_WORKERS:-0}" && [[ -z "${OPENAI_API_KEY:-}" ]]; then miss+=("Codex: OPENAI_API_KEY"); fi
+  if uses gemini "${GEMINI_WORKERS:-0}" && [[ -z "${GEMINI_API_KEY:-}" ]]; then miss+=("Gemini: GEMINI_API_KEY"); fi
+  if uses hermes "${HERMES_WORKERS:-0}"; then miss+=("Hermes: agent kullanıcılarıyla desteklenmiyor"); fi
+  if (( ${#miss[@]} )); then
+    {
+      echo "agents-room: ⚠️  agent'lar ortak kullanıcıyla (node, sudo'lu) çalışacak: bir agent diğerlerinin token'ını ve repo anahtarını okuyabilir."
+      echo "  Her agent'ı ayrı kullanıcıyla çalıştırmak için model girişini tarayıcı yerine ortamdan verin (compose .env):"
+      printf '    %s
+' "${miss[@]}"
+      echo "  (Bu uyarıyı kapatmak için AGENTS_ROOM_AGENT_USERS=off.)"
+    } >&2
+    echo off; return
+  fi
+  echo on
+}
+
+# Agent başına kullanıcı: team.ts root olarak çalışır, agent'ları ar-<ad> kullanıcılarıyla başlatır, repo anahtarını
+# yalnız kendi git vekilinde tutar.
+start_isolated() {
+  local secrets=/home/node/.config/agents-room/teams
+  mkdir -p "$AGENTS_ROOM_WORKSPACES"
+  # Kimlikler ortak kullanıcı moduyla aynı yerde: iki mod arasında geçişte agent adları ve token'ları korunur.
+  setpriv --reuid=node --regid=node --init-groups mkdir -p "$secrets"
+  chmod 700 /home/node/.config/agents-room "$secrets"
+  wait_for_logins
+  build_args
+  echo "agents-room: her agent kendi Linux kullanıcısıyla çalışıyor (sudo yok; repo anahtarı agent'lara verilmez)." >&2
+  HOME=/root AGENTS_ROOM_AGENT_USERS=1 AGENTS_ROOM_SECRETS="$secrets" exec node "$TEAM" "${ARGS[@]}" --foreground
+}
+
 do_start() {
   load_config
   if ! configured; then
@@ -243,6 +291,14 @@ EOF
     rm -f /tmp/agents-room.waiting
     echo "agents-room: ayar bulundu, ekip başlatılıyor."
     exec "$0" start
+  fi
+  if [[ $(id -u) == 0 ]]; then
+    [[ "$(agent_users_mode)" == on ]] && start_isolated
+    # Ortak kullanıcı modu: önceki ayrı kullanıcı modundan kalan dosyalar node'a geri verilir.
+    if [[ -d "$AGENTS_ROOM_WORKSPACES" ]] && find "$AGENTS_ROOM_WORKSPACES" ! -user node -print -quit | grep -q .; then
+      chown -R node:node "$AGENTS_ROOM_WORKSPACES"
+    fi
+    as_node "$0" start
   fi
   mkdir -p "$AGENTS_ROOM_WORKSPACES"
   prepare_clients

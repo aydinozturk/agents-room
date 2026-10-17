@@ -103,7 +103,15 @@ export function fetchRepo(dir: string, auth: GitAuth, url = ''): void {
  */
 export function gitLong(
   args: string[],
-  opt: { auth: GitAuth; url?: string; cwd?: string; stallMs?: number; onProgress?: (line: string) => void },
+  opt: {
+    auth: GitAuth;
+    url?: string;
+    cwd?: string;
+    stallMs?: number;
+    onProgress?: (line: string) => void;
+    /** Başka bir kullanıcı olarak çalıştır (root iken; agent'ın kendi klonunda git'i root çalıştırmasın). */
+    as?: { uid: number; gid: number; env: Record<string, string> };
+  },
 ): Promise<{ ok: boolean; error?: string }> {
   const stallMs = opt.stallMs ?? (Number(process.env.AGENTS_ROOM_GIT_STALL_SEC) || 300) * 1000; // boş/geçersiz → 300 sn
   return new Promise((resolveOnce) => {
@@ -111,9 +119,10 @@ export function gitLong(
     // öldürülür; yalnız üst git öldürülürse alt süreç stderr'i açık tutar ve 'close' hiç gelmez.
     const p = spawn('git', [...gitConfigArgs(opt.auth), ...args], {
       cwd: opt.cwd,
-      env: { ...process.env, ...gitEnv(opt.auth, opt.url ?? '') },
+      env: opt.as ? { ...opt.as.env, ...gitEnv(opt.auth, opt.url ?? '') } : { ...process.env, ...gitEnv(opt.auth, opt.url ?? '') },
       stdio: ['ignore', 'ignore', 'pipe'],
       detached: true,
+      ...(opt.as ? { uid: opt.as.uid, gid: opt.as.gid } : {}),
     });
     let settled = false;
     let killTimer: NodeJS.Timeout | undefined;
@@ -218,11 +227,13 @@ export async function cloneFromCache(
   dir: string,
   auth: GitAuth,
   onProgress?: (line: string) => void,
+  /** Nesneleri sabit bağlantı yerine alternates ile paylaş (agent kullanıcıları önbelleğin dosyalarına sahip olmasın). */
+  shared = false,
 ): Promise<{ ok: boolean; error?: string }> {
   // Tamamlanmış bir kopyanın üzerine yazılmaz (içinde agent'ın işi olabilir).
   if (workspaceReady(dir)) return { ok: false, error: `${dir} zaten var` };
   return cloneInPlace(dir, async () => {
-    const c = await gitLong(['clone', '--progress', cache, dir], { auth: { kind: 'none' }, onProgress });
+    const c = await gitLong(['clone', '--progress', ...(shared ? ['--shared'] : []), cache, dir], { auth: { kind: 'none' }, onProgress });
     if (!c.ok) return c;
     const r = spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', url], { encoding: 'utf8' });
     if (r.status !== 0) return { ok: false, error: redact((r.stderr || r.error?.message || '').trim(), auth) };

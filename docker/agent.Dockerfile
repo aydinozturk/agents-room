@@ -25,7 +25,8 @@ RUN set -eu; pkgs=""; \
     if [ -n "$pkgs" ]; then npm install -g $pkgs && npm cache clean --force; fi
 
 # Kalıcı birimler imajdaki dizinin sahipliğini devralır: /data agent kullanıcısına ait olmalı.
-# Agent'lar konteynerin içinde tam yetkilidir: gerektiğinde sudo ile sistem paketi kurabilir (parolasız).
+# Ortak kullanıcı modunda (model girişi tarayıcıyla yapıldıysa) agent'lar "node" olarak çalışır ve parolasız sudo'ları
+# vardır. Agent başına kullanıcı modunda (girişler ortamdan) agent'lar ar-<ad> kullanıcılarıdır: sudo'ları yoktur.
 RUN echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node && chmod 440 /etc/sudoers.d/node
 RUN mkdir -p /data/workspaces && chown -R node:node /data \
  && ln -s /opt/agents-room/docker/entrypoint.sh /usr/local/bin/agents-room
@@ -48,6 +49,10 @@ RUN mkdir -p /home/node/.agents/skills /home/node/.claude/skills \
  && ln -s /opt/agents-room/skills/agents-room /home/node/.agents/skills/agents-room \
  && ln -s /opt/agents-room/skills/agents-room /home/node/.claude/skills/agents-room
 WORKDIR /opt/agents-room
+# Konteyner root olarak açılır; entrypoint "start" dışındaki her komutu node kullanıcısına düşürür ve ekibi
+# ya agent başına Linux kullanıcılarıyla (root'tan) ya da ortak node kullanıcısıyla başlatır (docs/docker.md).
+USER root
+ENV HOME=/root
 # Ayar yoksa konteyner kurulumu bekler: docker exec -it <konteyner> agents-room setup
 ENTRYPOINT ["/opt/agents-room/docker/entrypoint.sh"]
 CMD ["start"]

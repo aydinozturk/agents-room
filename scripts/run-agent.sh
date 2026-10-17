@@ -78,6 +78,48 @@ fi
 PROMPT+="$GIT_NOTE"
 
 cd "$REPO"
+
+# Durdurulunca (docker stop, team.ts stop: süreç grubuna SIGTERM) yarım iş kaybolmasın: kirli ya da push edilmemiş
+# her çalışma ağacı origin'de wip/<dal> dalına kaydedilir. Ağaç, index ve görev dalı olduğu gibi kalır (stash/checkout yok).
+TIMEOUT=(); command -v timeout >/dev/null 2>&1 && TIMEOUT=(timeout 8)
+save_wip_one() ( # $1 çalışma ağacı, $2 dal (boş: ayrık HEAD)
+  cd "$1" 2>/dev/null || exit 0
+  head="$(git rev-parse -q --verify HEAD 2>/dev/null)" || exit 0
+  who="$(git config user.name 2>/dev/null || echo agent)"
+  br="$2"; [[ -z "$br" || "$br" == "$BASE" ]] && br="$who/${br:-detached}"
+  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    idx="$(mktemp)"; cp "$(git rev-parse --path-format=absolute --git-path index)" "$idx" 2>/dev/null
+    GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1 && tree="$(GIT_INDEX_FILE="$idx" git write-tree)"
+    rm -f "$idx"
+    [[ -n "${tree:-}" ]] || exit 0
+    commit="$(git commit-tree "$tree" -p "$head" -m "wip: unsaved work on $2 (runner stopped)")" || exit 0
+  elif [[ -z "$(git branch -r --contains "$head" 2>/dev/null)" ]]; then
+    commit="$head" # temiz ama push edilmemiş commit'ler
+  else
+    exit 0
+  fi
+  ${TIMEOUT[@]+"${TIMEOUT[@]}"} git push -q --force origin "$commit:refs/heads/wip/$br" </dev/null >/dev/null 2>&1 \
+    && echo "… yarım iş origin'de wip/$br dalına kaydedildi" >&2 \
+    || echo "⚠️  yarım iş wip/$br dalına push edilemedi ($1)" >&2
+)
+save_wip() {
+  local wt="" br="" line
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) wt="${line#worktree }"; br="" ;;
+      "branch refs/heads/"*) br="${line#branch refs/heads/}" ;;
+      "") [[ -n "$wt" ]] && save_wip_one "$wt" "$br"; wt="" ;;
+    esac
+  done < <(git -C "$REPO" worktree list --porcelain 2>/dev/null; echo)
+}
+on_stop() {
+  set +e; trap - TERM INT
+  echo "■ durduruluyor; yarım iş kaydediliyor…" >&2
+  save_wip
+  exit 143
+}
+trap on_stop TERM INT
+
 # Oturumsuz bekleme: sunucu agent'a iş/mesaj/istişare düşene ya da süre dolana kadar yanıtı tutar.
 # Yanıt: "WAKE\n<not>" | "TIMEOUT" | "CLOSED" | "ERROR\n<neden>". Bekleme boyunca agent çevrimiçi görünür.
 API="${AGENTS_ROOM_URL%/}"; API="${API%/mcp}"

@@ -222,6 +222,63 @@ test('kiralama süresi dolunca görev geri açılır', async () => {
   assert.equal(after.assignee, null);
 });
 
+test('kiralama dolunca: atanan agent korunur, kilitler silinir, eski sahip haberdar edilir', async () => {
+  const t = await call('orch', 'task_create', { room: 'pilot', title: 'Atanmış uzun iş', assignee: 'w1' });
+  const id = t.json.id;
+  await call('w1', 'task_claim', { id, lease_minutes: 5 });
+  const res = await call('w1', 'files_reserve', { repo: 'github.com/acme/todo', paths: ['src/lease/**'], task_id: id });
+  assert.equal(res.json.granted.length, 1);
+  const since = svc.history(null, 'pilot', { limit: 1 }).at(-1)!.id;
+  svc.db.prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(Date.now() - 1000, id);
+  svc.sweep();
+  const after = svc.getTask(id)!;
+  assert.equal(after.status, 'open');
+  assert.equal(after.assignee, 'w1');
+  assert.equal(svc.claimable(after, svc.getAgent('w2')!).ok, false);
+  assert.equal(svc.listReservations({ repo: 'github.com/acme/todo' }).filter((r) => r.task_id === id).length, 0);
+  assert.equal(svc.getAgent('w1')!.current_task, null);
+  const msg = svc.history(null, 'pilot', { since_id: since }).find((m) => m.body.includes(`#${id} lease expired`))!;
+  assert.ok(msg.mentions.includes('w1') && msg.mentions.includes('orch'), JSON.stringify(msg.mentions));
+  // Sahibi görevi yeniden alıp bitirir.
+  await call('w1', 'task_claim', { id });
+  await call('w1', 'task_complete', { id, result: 'tamam' });
+});
+
+test('plan görevi: kiralaması dolunca işçiye düşmez; iptal edilen agent görevini ve kilidini bırakır', async () => {
+  svc.createRoom('plan-lease', null, null, 'admin');
+  for (const n of ['orch', 'w1']) await call(n, 'room_join', { room: 'plan-lease' });
+  const plan = await call('orch', 'plan_create', { room: 'plan-lease', goal: 'Plan kiralaması', subtasks: [{ key: 'a', title: 'Bağımlı iş', depends_on: [] }] });
+  assert.equal(plan.isError, false, plan.text);
+  const parent = svc.listTasks({ room: 'plan-lease' }).find((x) => x.title === 'Plan kiralaması')!;
+  await call('orch', 'task_update', { id: parent.id, progress: 'işçiler bekleniyor' });
+  svc.db.prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(Date.now() - 1000, parent.id);
+  svc.sweep();
+  const p2 = svc.getTask(parent.id)!;
+  assert.equal(p2.status, 'in_progress');
+  assert.equal(p2.assignee, 'orch');
+  // Açık bir plan görevi bile işçiye verilmez.
+  svc.db.prepare("UPDATE tasks SET status = 'open', assignee = NULL WHERE id = ?").run(parent.id);
+  assert.match(svc.claimable(svc.getTask(parent.id)!, svc.getAgent('w1')!).reason!, /orchestrators only/);
+  const next = await call('w1', 'task_next', { room: 'plan-lease' });
+  assert.notEqual(next.json?.id, parent.id);
+  if (next.json?.id) await call('w1', 'task_complete', { id: next.json.id, result: 'ok' });
+
+  // Revoke: aktif görev açılır, kilitler silinir.
+  const tmp = svc.createAgent({ name: 'gecici', kind: 'codex', role: 'worker' });
+  svc.join('gecici', 'plan-lease');
+  const t = svc.createTask('orch', { room: 'plan-lease', title: 'Geçici işçinin işi', assignee: 'gecici' });
+  svc.claim('gecici', t.id);
+  svc.reserve('gecici', { repo: 'r', paths: ['a/**'], task_id: t.id });
+  svc.reserve('gecici', { repo: 'r', paths: ['b/**'] });
+  assert.ok(tmp.token);
+  svc.revokeAgent('gecici');
+  const rt = svc.getTask(t.id)!;
+  assert.equal(rt.status, 'open');
+  assert.equal(rt.assignee, null);
+  assert.equal(svc.listReservations({ agent: 'gecici' }).length, 0);
+  svc.review('orch', parent.id, { action: 'cancel' });
+});
+
 test('kiralama: heartbeat ve task_update uzun kiralamayı kısaltmaz', async () => {
   const t = await call('orch', 'task_create', { room: 'pilot', title: 'Uzun build' });
   await call('w2', 'task_claim', { id: t.json.id, lease_minutes: 240 });

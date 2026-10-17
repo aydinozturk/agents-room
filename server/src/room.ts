@@ -57,6 +57,7 @@ export interface Task {
   assignee: string | null;
   lease_until: number | null;
   lease_ms: number | null;
+  preassignee: string | null;
   attempts: number;
   branch: string | null;
   progress: string | null;
@@ -282,6 +283,10 @@ export class RoomService {
   revokeAgent(name: string): void {
     this.db.prepare("UPDATE agents SET revoked = 1, token_hash = NULL, status = 'offline' WHERE name = ?").run(name);
     this.log('agent.revoked', name, {}, 'warn');
+    // İptal edilen agent'ın aktif görevleri ve kilitleri bırakılır; başkansa koltuk yeniden belirlenir.
+    for (const t of this.listTasks({ assignee: name, status: ACTIVE_STATUSES, limit: 500 })) this.releaseLease(t, `released: @${name} was revoked`);
+    this.db.prepare('DELETE FROM reservations WHERE agent = ?').run(name);
+    for (const r of this.db.prepare('SELECT name FROM rooms WHERE chair = ?').all(name) as { name: string }[]) this.ensureChair(r.name);
   }
 
   authenticate(token: string): Agent | null {
@@ -838,8 +843,8 @@ export class RoomService {
     if (input.parent_id) this.requireTask(input.parent_id);
     const r = this.db
       .prepare(
-        `INSERT INTO tasks (room, parent_id, title, description, priority, capabilities, depends_on, created_by, assignee, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (room, parent_id, title, description, priority, capabilities, depends_on, created_by, assignee, preassignee, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.room,
@@ -850,6 +855,7 @@ export class RoomService {
         JSON.stringify(input.capabilities ?? []),
         JSON.stringify(input.depends_on ?? []),
         by,
+        input.assignee ?? null,
         input.assignee ?? null,
         now(),
         now(),
@@ -907,7 +913,7 @@ export class RoomService {
     return tx(this.db, () => {
       const parent = this.createTask(by, { room: input.room, title: input.goal, description, parent_id: input.parent_id ?? null, priority: 1 });
       if (consult) this.db.prepare('UPDATE consults SET task_id = COALESCE(task_id, ?) WHERE id = ?').run(parent.id, consult.id);
-      this.db.prepare("UPDATE tasks SET status = 'in_progress', assignee = ? WHERE id = ?").run(by, parent.id);
+      this.db.prepare("UPDATE tasks SET status = 'in_progress', assignee = ?, preassignee = ? WHERE id = ?").run(by, by, parent.id);
       const idByKey = new Map<string, number>();
       const subtasks: Task[] = [];
       for (const s of order) {
@@ -954,6 +960,35 @@ export class RoomService {
       .map((r) => parseRow<Task>(r, TASK_JSON));
   }
 
+  private hasChildren(id: number): boolean {
+    return !!this.db.prepare('SELECT 1 FROM tasks WHERE parent_id = ? LIMIT 1').get(id);
+  }
+
+  /**
+   * Kiralaması düşen (ya da sahibi iptal edilen) görevi geri açar: görev atandığı agent'a (preassignee) döner,
+   * görevin dosya kilitleri silinir, eski sahibin "şu anki görevi" temizlenir ve hem oluşturan hem eski sahip haberdar edilir.
+   */
+  private releaseLease(t: Task, why: string): void {
+    const back = t.preassignee && !this.getAgent(t.preassignee)?.revoked ? t.preassignee : null;
+    this.db.prepare("UPDATE tasks SET status = 'open', assignee = ?, lease_until = NULL, updated_at = ? WHERE id = ?").run(back, now(), t.id);
+    releaseTaskReservations(this, t.id);
+    if (t.assignee) {
+      this.db
+        .prepare("UPDATE agents SET current_task = NULL, activity = NULL, status = CASE WHEN status = 'working' THEN 'idle' ELSE status END WHERE name = ? AND current_task = ?")
+        .run(t.assignee, t.id);
+    }
+    const mentions = [...new Set([t.created_by, t.assignee].filter((x): x is string => !!x && x !== 'system'))];
+    this.systemMessage(
+      t.room,
+      `⏰ #${t.id} ${why}; the task is open again${back ? ` and still assigned to @${back}` : ''}. Its file reservations were released.`,
+      t.id,
+      mentions,
+    );
+    this.log('task.lease_expired', t.assignee, { id: t.id, why, back }, 'warn');
+    this.emit({ type: 'task', room: t.room, data: this.getTask(t.id) });
+    this.emit({ type: 'reservation', data: null });
+  }
+
   private depsDone(t: Task): boolean {
     return t.depends_on.every((d) => this.getTask(d)?.status === 'done');
   }
@@ -962,6 +997,7 @@ export class RoomService {
   claimable(t: Task, agent: Agent): { ok: boolean; reason?: string } {
     if (t.status !== 'open') return { ok: false, reason: `status is ${t.status}` };
     if (t.assignee && t.assignee !== agent.name) return { ok: false, reason: `reserved for @${t.assignee}` };
+    if (agent.role !== 'orchestrator' && agent.role !== 'admin' && this.hasChildren(t.id)) return { ok: false, reason: 'plan task: orchestrators only' };
     if (!this.depsDone(t)) return { ok: false, reason: `waiting on dependencies: ${t.depends_on.map((d) => '#' + d).join(', ')}` };
     const missing = t.capabilities.filter((c) => !agent.capabilities.includes(c));
     if (missing.length && !t.assignee) return { ok: false, reason: `missing capabilities: ${missing.join(', ')}` };
@@ -1141,8 +1177,9 @@ export class RoomService {
       case 'reassign':
         if (input.assignee && !this.getAgent(input.assignee)) throw new RoomError(`Agent not found: ${input.assignee}`);
         this.db
-          .prepare("UPDATE tasks SET status = 'open', assignee = ?, lease_until = NULL, updated_at = ? WHERE id = ?")
-          .run(input.assignee ?? null, now(), id);
+          .prepare("UPDATE tasks SET status = 'open', assignee = ?, preassignee = ?, lease_until = NULL, updated_at = ? WHERE id = ?")
+          .run(input.assignee ?? null, input.assignee ?? null, now(), id);
+        if ((input.assignee ?? null) !== t.assignee) releaseTaskReservations(this, id);
         this.systemMessage(t.room, `↪️ #${id} reassigned → ${input.assignee ? '@' + input.assignee : 'anyone'}${fb}`, id, input.assignee ? [input.assignee] : []);
         break;
     }
@@ -1633,11 +1670,23 @@ export class RoomService {
       .all(...ACTIVE_STATUSES, now())
       .map((r) => parseRow<Task>(r, TASK_JSON));
     for (const t of expired) {
-      this.db
-        .prepare("UPDATE tasks SET status = 'open', assignee = NULL, lease_until = NULL, updated_at = ? WHERE id = ?")
-        .run(now(), t.id);
-      this.systemMessage(t.room, `⏰ #${t.id} lease expired (@${t.assignee} went silent); the task is open again`, t.id, [t.created_by]);
-      this.log('task.lease_expired', t.assignee, { id: t.id }, 'warn');
+      if (!this.hasChildren(t.id)) {
+        this.releaseLease(t, `lease expired (@${t.assignee} went silent)`);
+        continue;
+      }
+      // Plan (alt görevli üst görev) açılmaz: işçiye düşmemeli. Orkestratör oturumlar arasında uyurken kiralaması
+      // dolması olağandır; sahibi çevrimiçiyse (runner bekliyor) yalnız kiralama kaldırılır, değilse masaya haber verilir.
+      this.db.prepare('UPDATE tasks SET lease_until = NULL, updated_at = ? WHERE id = ?').run(now(), t.id);
+      if (!t.assignee || !this.isOnline(t.assignee, CHAIR_GRACE_MS)) {
+        const notify = [...new Set([this.chairOf(t.room), t.created_by].filter((x): x is string => !!x && x !== t.assignee && x !== 'system'))];
+        this.systemMessage(
+          t.room,
+          `⏰ plan #${t.id} lease expired and its owner @${t.assignee ?? 'none'} is offline; the plan stays with them. ${notify.map((n) => '@' + n).join(' ')} reassign it with task_review(${t.id}, action="reassign") if it should move.`.trim(),
+          t.id,
+          notify,
+        );
+      }
+      this.log('task.plan_lease_expired', t.assignee, { id: t.id }, 'warn');
       this.emit({ type: 'task', room: t.room, data: this.getTask(t.id) });
     }
     const gone = this.db

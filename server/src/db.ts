@@ -160,6 +160,8 @@ function migrate(db: DatabaseSync): void {
   const taskCols = (db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((c) => c.name);
   // Görev alınırken istenen kiralama süresi: yenilemeler bunu kullanır (heartbeat süreyi kısaltmaz).
   if (!taskCols.includes('lease_ms')) db.exec('ALTER TABLE tasks ADD COLUMN lease_ms INTEGER');
+  // Görevin atandığı agent: kiralama düşünce görev herkese değil yine ona açılır.
+  if (!taskCols.includes('preassignee')) db.exec('ALTER TABLE tasks ADD COLUMN preassignee TEXT');
 }
 
 export function now(): number {

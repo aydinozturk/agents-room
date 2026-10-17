@@ -518,3 +518,47 @@ test('uyandırma: model oturumu olmadan bekler; görev, bahsetme, insan mesajı 
   svc.closeRoom('uyku', 'admin');
   assert.equal((await wake('uw', { timeout_sec: 0 })).text, 'CLOSED\n');
 });
+
+test('yeni iş: görevler iptal, eski mesajlar bağlama girmez ve kimseyi uyandırmaz, harita korunur, hedef orkestratörü uyandırır', async () => {
+  tokens.yw = svc.createAgent({ name: 'yw', kind: 'codex', role: 'worker', capabilities: ['typescript'] }).token;
+  tokens.yo = svc.createAgent({ name: 'yo', kind: 'claude-code', role: 'orchestrator' }).token;
+  svc.createRoom('yeni', null, null, 'admin');
+  const wake = (name: string) =>
+    fetch(base + '/api/agent/wake', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokens[name]}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ room: 'yeni', timeout_sec: 0 }),
+    }).then((r) => r.text());
+  await wake('yw');
+  await wake('yo');
+  svc.writeNotes('yo', 'yeni', 'set', '# Harita\n- src/: kaynak');
+  const plan = svc.createPlan('yo', { room: 'yeni', goal: 'Eski iş', subtasks: [{ key: 'a', title: 'eski görev', capabilities: ['typescript'] }] });
+  svc.send('yo', { room: 'yeni', body: '@yw eski işle ilgili soru' });
+
+  const adminFetch = (path: string, body: unknown) =>
+    fetch(base + path, { method: 'POST', headers: { authorization: `Bearer ${tokens.admin}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await fetch(base + '/api/rooms/yeni/chapter', { method: 'POST', headers: { authorization: `Bearer ${tokens.yw}` } })).status, 403);
+  const r = await adminFetch('/api/rooms/yeni/chapter', { title: 'Fatura modülü' });
+  assert.equal(r.status, 200);
+  const j = (await r.json()) as { cancelled: number };
+  assert.equal(j.cancelled, 2); // plan + alt görev
+
+  assert.equal(svc.getTask(plan.parent.id)!.status, 'cancelled');
+  // Eski bahsetme ve iptal edilen görevler kimseyi uyandırmaz; harita durur.
+  assert.equal(await wake('yw'), 'TIMEOUT\n');
+  assert.equal(await wake('yo'), 'TIMEOUT\n');
+  assert.match(svc.getNotes('yeni').notes, /src\/: kaynak/);
+  // Katılınca yalnızca yeni işin mesajları görünür; eskiler before_id ile okunabilir.
+  const join = await call('w1', 'room_join', { room: 'yeni' });
+  assert.match(join.text, /📌 New work: Fatura modülü/);
+  assert.doesNotMatch(join.text, /eski işle ilgili soru/);
+  const marker = svc.chapterStart('yeni');
+  const old = await call('w1', 'read_messages', { room: 'yeni', before_id: marker });
+  assert.match(old.text, /eski işle ilgili soru/);
+
+  // Hedefle başlatılan yeni iş orkestratörü uyandırır; harita istenirse sıfırlanır.
+  await adminFetch('/api/rooms/yeni/chapter', { title: 'Rapor', goal: 'Hedef: rapor ekranı', reset_notes: true });
+  assert.match(await wake('yo'), /<admin> Hedef: rapor ekranı/);
+  assert.equal(await wake('yw'), 'TIMEOUT\n');
+  assert.equal(svc.getNotes('yeni').notes, '');
+});

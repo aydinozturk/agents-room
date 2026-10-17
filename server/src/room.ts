@@ -415,6 +415,54 @@ export class RoomService {
   }
 
   /** Odayı kapatır: açık görevler iptal edilir, üyelere "masadan kalkın" bildirimi gider. */
+  /** Odadaki geçerli işin başladığı mesaj (yoksa 0): agent'lar varsayılan olarak bundan öncesini görmez. */
+  chapterStart(room: string): number {
+    const r = this.db.prepare('SELECT chapter_msg FROM rooms WHERE name = ?').get(room) as { chapter_msg: number | null } | undefined;
+    return r?.chapter_msg ?? 0;
+  }
+
+  /**
+   * Yeni iş: odayı kapatmadan önceki işi geride bırakır. Bitmemiş görevler iptal edilir, açık istişareler
+   * (başkan seçimi hariç) kapanır, bir sınır mesajı konur ve herkesin okuma imleci sona çekilir; böylece
+   * eski mesaj ve planlar ne bir oturum açtırır ne de yeni oturumların bağlamına girer. Mesajlar silinmez.
+   * Oda notları (depo haritası) varsayılan olarak korunur. Hedef verilirse insan mesajı olarak yazılır
+   * ve orkestratörleri uyandırır.
+   */
+  newChapter(by: string, room: string, input: { title?: string; goal?: string; resetNotes?: boolean } = {}): { message: Message; cancelled: number; consults: number } {
+    this.requireRoom(room);
+    const open = this.listTasks({ room, status: ['open', 'claimed', 'in_progress', 'review'], limit: 500 });
+    let consults = 0;
+    tx(this.db, () => {
+      for (const t of open) {
+        this.db.prepare("UPDATE tasks SET status = 'cancelled', lease_until = NULL, error = ?, updated_at = ? WHERE id = ?").run(`new work started by ${by}`, now(), t.id);
+        releaseTaskReservations(this, t.id);
+      }
+      consults = Number(
+        this.db
+          .prepare("UPDATE consults SET status = 'closed', decision = COALESCE(decision, 'superseded: new work started'), closed_at = ? WHERE room = ? AND status = 'open' AND kind != 'election'")
+          .run(now(), room).changes,
+      );
+      if (input.resetNotes) this.db.prepare('UPDATE rooms SET notes = NULL, notes_by = ?, notes_at = ? WHERE name = ?').run(by, now(), room);
+    });
+    const title = input.title?.trim() || 'new work';
+    const msg = this.systemMessage(
+      room,
+      `📌 New work: ${title}. Earlier messages, tasks and plans in this room belong to the previous work${open.length ? ` (${open.length} unfinished task(s) cancelled)` : ''}; ignore them unless a human refers to them.${input.resetNotes ? ' The room notes were cleared.' : ''}`,
+    );
+    this.db.prepare('UPDATE rooms SET chapter_msg = ? WHERE name = ?').run(msg.id, room);
+    // Sınır mesajı kimseyi uyandırmasın: tüm üyelerin imleci ona çekilir.
+    this.db.prepare('UPDATE memberships SET last_read = MAX(last_read, ?) WHERE room = ?').run(msg.id, room);
+    for (const m of this.members(room)) {
+      const a = this.getAgent(m);
+      if (a?.current_task && open.some((t) => t.id === a.current_task)) this.setStatus(m, 'idle', null, null);
+    }
+    this.log('room.chapter', by, { room, title, cancelled: open.length, consults, reset_notes: !!input.resetNotes });
+    this.emit({ type: 'task', room, data: null });
+    this.emit({ type: 'room', room, data: this.getRoom(room) });
+    if (input.goal?.trim()) this.send(by, { room, body: input.goal.trim() });
+    return { message: msg, cancelled: open.length, consults };
+  }
+
   closeRoom(name: string, by: string, reason?: string): unknown {
     if (name === 'lobby') throw new RoomError('The lobby cannot be closed');
     this.requireRoom(name);
@@ -458,7 +506,7 @@ export class RoomService {
       .run(agent, room, now());
     if (r.changes > 0) this.systemMessage(room, `${agent} joined the table`);
     if (this.getAgent(agent)?.role === 'orchestrator') this.ensureChair(room);
-    const recent = this.history(agent, room, { limit: 20 });
+    const recent = this.history(agent, room, { limit: 20, floor: this.chapterStart(room) });
     // Katılımda imleci sona çek: agent yalnızca bundan sonraki mesajlar için beklesin.
     this.markRead(agent, room, this.lastMessageId(room));
     return { room: this.getRoom(room), members: this.members(room), recent };
@@ -540,7 +588,7 @@ export class RoomService {
     return "(kind != 'dm' OR sender = :agent OR recipient = :agent)";
   }
 
-  history(agent: string | null, room: string, opts: { since_id?: number; before_id?: number; limit?: number } = {}): Message[] {
+  history(agent: string | null, room: string, opts: { since_id?: number; before_id?: number; limit?: number; floor?: number } = {}): Message[] {
     const limit = Math.min(opts.limit ?? 50, 200);
     const vis = agent ? `AND ${this.visibleClause()}` : '';
     const params: Record<string, string | number> = { room, limit };
@@ -554,8 +602,10 @@ export class RoomService {
     } else {
       const before = opts.before_id !== undefined ? 'AND id < :before' : '';
       if (opts.before_id !== undefined) params.before = opts.before_id;
+      const floor = opts.floor ? 'AND id >= :floor' : '';
+      if (opts.floor) params.floor = opts.floor;
       rows = this.db
-        .prepare(`SELECT * FROM (SELECT * FROM messages WHERE room = :room ${before} ${vis} ORDER BY id DESC LIMIT :limit) ORDER BY id ASC`)
+        .prepare(`SELECT * FROM (SELECT * FROM messages WHERE room = :room ${before} ${floor} ${vis} ORDER BY id DESC LIMIT :limit) ORDER BY id ASC`)
         .all(params);
     }
     return rows.map((r) => parseRow<Message>(r, MSG_JSON));

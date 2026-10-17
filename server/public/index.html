@@ -86,6 +86,9 @@ a { color: var(--brass-ink); }
 .confirm-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
 .confirm-body ul { margin: 0; padding-left: 1.2em; color: var(--muted); }
 .confirm-body textarea { width: 100%; min-height: 70px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.confirm-body input[type=text] { width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.confirm-body .check { display: flex; gap: 8px; align-items: flex-start; color: var(--muted); }
+.confirm-body .check input { margin-top: .25em; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; font-size: .85rem; color: var(--muted); }
 .live { display: inline-flex; align-items: center; gap: 7px; }
@@ -331,6 +334,7 @@ dialog::backdrop { background: rgba(10, 18, 26, .45); }
       </div>
       <div class="head-actions">
         <div class="stats" id="stats"></div>
+        <button class="btn ghost small" id="chapterBtn" hidden title="Önceki işi geride bırak, aynı odada yeni bir işe başla">Yeni iş</button>
         <button class="btn danger small" id="closeRoomBtn" hidden>Odayı kapat</button>
       </div>
     </div>
@@ -396,6 +400,25 @@ dialog::backdrop { background: rgba(10, 18, 26, .45); }
     <div class="confirm-actions">
       <button type="button" class="btn ghost" id="closeCancel">Vazgeç</button>
       <button type="submit" class="btn danger solid" id="closeConfirm">Odayı kapat</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="chapterDlg" aria-labelledby="chapterTitle">
+  <div class="dlg-head"><div><h3 id="chapterTitle">Yeni iş başlat</h3><div class="sub" id="chapterSub"></div></div></div>
+  <form class="confirm-body" id="chapterForm" method="dialog">
+    <p style="margin:0">Oda açık kalır, agent'lar ve çalışma kopyaları yerinde durur. Yeni işe geçerken:</p>
+    <ul>
+      <li>bitmemiş görevler ve planlar iptal edilir, açık istişareler kapanır;</li>
+      <li>agent'lar odaya katılırken yalnızca bu noktadan sonraki mesajları görür; eski mesajlar silinmez, burada okunabilir;</li>
+      <li>depo haritası (oda notları) korunur, yeni oturumlar kodu baştan taramaz.</li>
+    </ul>
+    <input type="text" id="chapterName" placeholder="İşin kısa adı (ör. Fatura modülü MCP araçları)" aria-label="İşin adı">
+    <textarea id="chapterGoal" placeholder="Hedef (isteğe bağlı): yazarsanız orkestratör bununla uyanır" aria-label="Hedef"></textarea>
+    <label class="check"><input type="checkbox" id="chapterReset"> <span>Depo haritasını da sıfırla (repo yapısı köklü biçimde değiştiyse)</span></label>
+    <div class="confirm-actions">
+      <button type="button" class="btn ghost" id="chapterCancel">Vazgeç</button>
+      <button type="submit" class="btn" id="chapterConfirm">Yeni işi başlat</button>
     </div>
   </form>
 </dialog>
@@ -568,6 +591,7 @@ function renderHead() {
   const isAdmin = state.me?.role === 'admin';
   const closed = !!r?.closed_at;
   $('closeRoomBtn').hidden = !isAdmin || closed || room === 'lobby';
+  $('chapterBtn').hidden = !isAdmin || closed || room === 'lobby';
   $('closedBanner').hidden = !closed;
   $('reopenBtn').hidden = !isAdmin;
   if (closed) $('closedText').textContent = `🔒 Bu oda ${new Date(r.closed_at).toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })} tarihinde ${r.closed_by} tarafından kapatıldı. Geçmiş okunabilir; yeni mesaj ve görev kabul edilmez.`;
@@ -593,6 +617,31 @@ $('closeForm').addEventListener('submit', async (e) => {
     await refresh();
   } catch (err) { alert(err.message); }
   finally { $('closeConfirm').disabled = false; }
+});
+// ---------- yeni iş ----------
+const chapterDlg = $('chapterDlg');
+$('chapterBtn').addEventListener('click', () => {
+  const open = state.tasks.filter((t) => t.room === room && ['open', 'claimed', 'in_progress', 'review'].includes(t.status)).length;
+  $('chapterTitle').textContent = `"${room}" odasında yeni iş`;
+  $('chapterSub').textContent = open ? `${open} bitmemiş görev iptal edilecek` : 'Bitmemiş görev yok';
+  $('chapterName').value = '';
+  $('chapterGoal').value = '';
+  $('chapterReset').checked = false;
+  chapterDlg.showModal();
+});
+$('chapterCancel').addEventListener('click', () => chapterDlg.close());
+$('chapterForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('chapterConfirm').disabled = true;
+  try {
+    await api(`/api/rooms/${encodeURIComponent(room)}/chapter`, {
+      method: 'POST',
+      body: JSON.stringify({ title: $('chapterName').value.trim() || undefined, goal: $('chapterGoal').value.trim() || undefined, reset_notes: $('chapterReset').checked }),
+    });
+    chapterDlg.close();
+    await refresh();
+  } catch (err) { alert(err.message); }
+  finally { $('chapterConfirm').disabled = false; }
 });
 $('reopenBtn').addEventListener('click', async () => {
   await api(`/api/rooms/${encodeURIComponent(room)}/reopen`, { method: 'POST', body: '{}' });

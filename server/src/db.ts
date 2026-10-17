@@ -155,6 +155,8 @@ function migrate(db: DatabaseSync): void {
   if (!cols.includes('notes')) db.exec('ALTER TABLE rooms ADD COLUMN notes TEXT');
   if (!cols.includes('notes_by')) db.exec('ALTER TABLE rooms ADD COLUMN notes_by TEXT');
   if (!cols.includes('notes_at')) db.exec('ALTER TABLE rooms ADD COLUMN notes_at INTEGER');
+  // Yeni iş sınırı: agent'lar odaya katılırken yalnızca bu mesajdan sonrasını görür.
+  if (!cols.includes('chapter_msg')) db.exec('ALTER TABLE rooms ADD COLUMN chapter_msg INTEGER');
 }
 
 export function now(): number {

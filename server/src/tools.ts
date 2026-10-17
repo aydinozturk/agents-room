@@ -217,7 +217,7 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
 
   tool(
     'read_messages',
-    'Reads a room\'s message history. Without since_id returns the latest messages; use before_id to page further back. Does not advance your unread cursor; use wait_for_messages for that.',
+    'Reads a room\'s message history. Without since_id returns the latest messages of the current work (since the last "📌 New work" marker); use before_id to page further back. Does not advance your unread cursor; use wait_for_messages for that.',
     {
       room: z.string().default('lobby'),
       since_id: z.number().int().optional(),
@@ -225,7 +225,7 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
       limit: z.number().int().min(1).max(200).default(50),
     },
     ({ room, since_id, before_id, limit }) => {
-      const msgs = svc.history(me.name, room, { since_id, before_id, limit });
+      const msgs = svc.history(me.name, room, { since_id, before_id, limit, floor: before_id === undefined ? svc.chapterStart(room) : undefined });
       return ok(msgs, fmtMessages(msgs));
     },
     { readOnlyHint: true },

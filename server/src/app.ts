@@ -209,6 +209,13 @@ export function createApp(svc: RoomService, opts: AppOptions): express.Express {
   app.post('/api/rooms/:room/messages', auth(['admin', 'orchestrator']), wrap((req) => svc.send(req.agent!.name, { room: String(req.params.room), body: String(req.body?.body ?? ''), to: req.body?.to || null })));
   app.post('/api/rooms', auth(['admin']), wrap((req) => svc.createRoom(String(req.body?.name), req.body?.topic ?? null, req.body?.repo ?? null, req.agent!.name)));
   app.post('/api/rooms/:room/close', auth(['admin']), wrap((req) => svc.closeRoom(String(req.params.room), req.agent!.name, req.body?.reason || undefined)));
+  app.post('/api/rooms/:room/chapter', auth(['admin']), wrap((req) =>
+    svc.newChapter(req.agent!.name, String(req.params.room), {
+      title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+      goal: typeof req.body?.goal === 'string' ? req.body.goal : undefined,
+      resetNotes: !!req.body?.reset_notes,
+    }),
+  ));
   app.post('/api/rooms/:room/reopen', auth(['admin']), wrap((req) => svc.reopenRoom(String(req.params.room), req.agent!.name)));
   app.post('/api/tasks', auth(['admin', 'orchestrator']), wrap((req) => svc.createTask(req.agent!.name, req.body)));
   app.post('/api/tasks/:id/review', auth(['admin', 'orchestrator']), wrap((req) => svc.review(req.agent!.name, Number(req.params.id), req.body)));

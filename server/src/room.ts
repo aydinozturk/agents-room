@@ -56,6 +56,7 @@ export interface Task {
   created_by: string;
   assignee: string | null;
   lease_until: number | null;
+  lease_ms: number | null;
   attempts: number;
   branch: string | null;
   progress: string | null;
@@ -975,8 +976,8 @@ export class RoomService {
       if (!c.ok) throw new RoomError(`#${id} cannot be claimed: ${c.reason}`);
       // İyimser kilit: yalnızca hâlâ 'open' ise güncelle (yarış durumlarına karşı).
       const r = this.db
-        .prepare("UPDATE tasks SET status = 'claimed', assignee = ?, lease_until = ?, attempts = attempts + 1, updated_at = ? WHERE id = ? AND status = 'open'")
-        .run(agentName, now() + leaseMin * 60_000, now(), id);
+        .prepare("UPDATE tasks SET status = 'claimed', assignee = ?, lease_until = ?, lease_ms = ?, attempts = attempts + 1, updated_at = ? WHERE id = ? AND status = 'open'")
+        .run(agentName, now() + leaseMin * 60_000, leaseMin * 60_000, now(), id);
       if (r.changes === 0) throw new RoomError(`#${id} was just claimed by another agent`);
       this.setStatus(agentName, 'working', `#${id} ${t.title}`, id);
       const nt = this.getTask(id)!;
@@ -1024,18 +1025,28 @@ export class RoomService {
     const t = this.requireTask(id);
     this.requireOwner(t, agent);
     if (FINAL_STATUSES.includes(t.status)) throw new RoomError(`#${id} is already ${t.status}`);
-    const status = input.status ?? (t.status === 'claimed' ? 'in_progress' : t.status);
+    // Açık görev (ör. task_review reopen sonrası) yalnız atandığı agent tarafından, claim ile aynı kontrollerle sürdürülür.
+    // Serbest bırakma yalnız açık status='open' ile olur; status verilmeyen güncelleme görevi asla bırakmaz.
+    if (t.status === 'open' && input.status !== 'open') {
+      if (t.assignee !== agent) throw new RoomError(`#${id} is open; claim it first with task_claim`);
+      const c = this.claimable(t, this.getAgent(agent)!);
+      if (!c.ok) throw new RoomError(`#${id} cannot be resumed: ${c.reason}`);
+    }
+    const status = input.status ?? (t.status === 'claimed' || t.status === 'open' ? 'in_progress' : t.status);
     const release = status === 'open';
+    // Kiralama asla kısalmaz: alınırken istenen süre (lease_ms) korunur, yenileme en az o kadar uzatır.
+    const leaseMs = input.lease_minutes ? input.lease_minutes * 60_000 : (t.lease_ms ?? DEFAULT_LEASE_MIN * 60_000);
     this.db
       .prepare(
         `UPDATE tasks SET status = ?, progress = COALESCE(?, progress), branch = COALESCE(?, branch),
-         lease_until = ?, assignee = ?, updated_at = ? WHERE id = ?`,
+         lease_until = ?, lease_ms = ?, assignee = ?, updated_at = ? WHERE id = ?`,
       )
       .run(
         status,
         input.progress ?? null,
         input.branch ?? null,
-        release ? null : now() + (input.lease_minutes ?? DEFAULT_LEASE_MIN) * 60_000,
+        release ? null : Math.max(t.lease_until ?? 0, now() + leaseMs),
+        leaseMs,
         release ? null : t.assignee,
         now(),
         id,
@@ -1043,8 +1054,8 @@ export class RoomService {
     if (release) {
       this.systemMessage(t.room, `#${id} released, open again: ${input.progress ?? ''}`.trim(), id);
       this.setStatus(agent, 'idle', null, null);
-    } else if (input.progress) {
-      this.setStatus(agent, status === 'review' ? 'idle' : 'working', `#${id} ${input.progress}`, id);
+    } else if (input.progress || t.status === 'open') {
+      this.setStatus(agent, status === 'review' ? 'idle' : 'working', `#${id} ${input.progress ?? t.title}`, id);
     }
     if (status === 'review') this.systemMessage(t.room, `#${id} ready for review: ${t.title}`, id, [t.created_by]);
     const nt = this.getTask(id)!;

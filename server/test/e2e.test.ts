@@ -222,6 +222,45 @@ test('kiralama süresi dolunca görev geri açılır', async () => {
   assert.equal(after.assignee, null);
 });
 
+test('kiralama: heartbeat ve task_update uzun kiralamayı kısaltmaz', async () => {
+  const t = await call('orch', 'task_create', { room: 'pilot', title: 'Uzun build' });
+  await call('w2', 'task_claim', { id: t.json.id, lease_minutes: 240 });
+  await call('w2', 'task_update', { id: t.json.id, progress: 'derleniyor' });
+  await call('w2', 'heartbeat', { status: 'working', activity: 'build' });
+  const after = svc.getTask(t.json.id)!;
+  assert.equal(after.status, 'in_progress');
+  assert.ok(after.lease_until! >= Date.now() + 239 * 60_000, `lease ${(after.lease_until! - Date.now()) / 60_000} dk`);
+  await call('w2', 'task_complete', { id: t.json.id, result: 'tamam' });
+});
+
+test('reopen sonrası sahibin task_update çağrısı görevi bırakmaz, işe devam ettirir', async () => {
+  const t = await call('orch', 'task_create', { room: 'pilot', title: 'Gözden geçirilecek iş', assignee: 'w1' });
+  const id = t.json.id;
+  await call('w1', 'task_claim', { id });
+  await call('w1', 'task_complete', { id, result: 'ilk sürüm' });
+  await call('orch', 'task_review', { id, action: 'reopen', feedback: 'çakışmayı düzelt' });
+  const since = svc.history(null, 'pilot', { limit: 1 }).at(-1)!.id;
+  const u = await call('w1', 'task_update', { id, progress: 'rebase ediliyor' });
+  assert.equal(u.isError, false, u.text);
+  const after = svc.getTask(id)!;
+  assert.equal(after.status, 'in_progress');
+  assert.equal(after.assignee, 'w1');
+  assert.ok(after.lease_until! > Date.now());
+  const msgs = svc.history(null, 'pilot', { since_id: since });
+  assert.ok(!msgs.some((m) => /released/.test(m.body)), msgs.map((m) => m.body).join('\n'));
+
+  // Başkasına atanmış ya da atanmamış açık görev task_update ile alınamaz.
+  const free = await call('orch', 'task_create', { room: 'pilot', title: 'Sahipsiz iş' });
+  const bad = await call('orch', 'task_update', { id: free.json.id, progress: 'x' });
+  assert.equal(bad.isError, true);
+  assert.match(bad.text, /claim it first/);
+  const bad2 = await call('orch', 'task_update', { id: free.json.id, status: 'in_progress' });
+  assert.equal(bad2.isError, true);
+  assert.equal(svc.getTask(free.json.id)!.status, 'open');
+  await call('w1', 'task_complete', { id, result: 'düzeltildi' });
+  await call('orch', 'task_review', { id: free.json.id, action: 'cancel' });
+});
+
 test('panel API: yetki ve durum', async () => {
   const unauth = await fetch(base + '/api/state');
   assert.equal(unauth.status, 401);

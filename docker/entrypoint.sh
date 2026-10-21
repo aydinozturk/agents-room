@@ -295,8 +295,11 @@ EOF
   fi
   if [[ $(id -u) == 0 ]]; then
     [[ "$(agent_users_mode)" == on ]] && start_isolated
-    # Ortak kullanıcı modu: önceki ayrı kullanıcı modundan kalan dosyalar node'a geri verilir.
-    if [[ -d "$AGENTS_ROOM_WORKSPACES" ]] && find "$AGENTS_ROOM_WORKSPACES" ! -user node -print -quit | grep -q .; then
+    # Ortak kullanıcı modu: önceki ayrı kullanıcı modundan kalan dosyalar node'a geri verilir. O mod her açılışta
+    # agent kopyalarını (workspaces/<oda>/<ad>) agent kullanıcısına verir; izini anlamak için o derinliğe kadar bakmak
+    # yeter. Tüm dosyaları taramak büyük repolarda her açılışı dakikalarca bekletir.
+    if [[ -d "$AGENTS_ROOM_WORKSPACES" ]] && find "$AGENTS_ROOM_WORKSPACES" -maxdepth 2 ! -user node -print -quit | grep -q .; then
+      echo "agents-room: ayrı kullanıcı modundan kalan dosyalar node'a geri veriliyor (büyük repolarda birkaç dakika sürebilir)…" >&2
       chown -R node:node "$AGENTS_ROOM_WORKSPACES"
     fi
     as_node "$0" start

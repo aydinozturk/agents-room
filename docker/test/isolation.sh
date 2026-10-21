@@ -100,5 +100,19 @@ names2=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/data/works
 [[ "$names2" == "$names" ]] && echo "restart_names=same" || echo "restart_names=changed ($names → $names2)"
 grep -q 'güncellenemedi\|yerine .* kullanılacak' $T/team2.log && { echo "restart=warn"; grep 'güncellenemedi\|kullanılacak' $T/team2.log; } || echo "restart=ok"
 kill -TERM $TEAM_PID; wait $TEAM_PID 2>/dev/null || true
+if [[ "$MODE" == isolated ]]; then
+  # Ortak kullanıcı moduna dönüş: kalan dosyalar bir kez node'a geri verilir; sonraki açılışlar yeniden taramaz.
+  for i in 3 4; do
+    LOGIN+=(AGENTS_ROOM_AGENT_USERS=off)
+    start_team $T/team$i.log
+    until grep -q 'Ekip ayakta' $T/team$i.log 2>/dev/null; do
+      (( SECONDS < deadline + 120 )) || { echo "FAIL: ekip ortak kullanıcıyla başlamadı"; cat $T/team$i.log; exit 1; }
+      sleep 0.5
+    done
+    kill -TERM $TEAM_PID; wait $TEAM_PID 2>/dev/null || true
+  done
+  [[ -z "$(find /data/workspaces ! -user node -print -quit)" ]] && grep -q 'geri veriliyor' $T/team3.log && echo "handback=ok" || echo "handback=missing"
+  grep -q 'geri veriliyor' $T/team4.log && echo "rescan=again" || echo "rescan=none"
+fi
 echo "== branches"
 git --git-dir $T/git/proje.git for-each-ref --format='%(refname:short)' 'refs/heads/ar/'

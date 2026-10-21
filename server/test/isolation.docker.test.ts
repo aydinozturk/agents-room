@@ -14,7 +14,7 @@ const skip = process.env.AGENTS_ROOM_DOCKER_TEST !== '1' ? 'AGENTS_ROOM_DOCKER_T
 function run(mode: 'isolated' | 'fallback'): { out: string; agents: string[] } {
   const r = spawnSync('docker', ['run', '--rm', '-u', 'root', '-v', `${repo}:/src:ro`, '--entrypoint', 'bash', image, '/src/docker/test/isolation.sh', mode], {
     encoding: 'utf8',
-    timeout: 270_000,
+    timeout: 420_000,
   });
   const out = r.stdout + r.stderr;
   assert.equal(r.status, 0, out);
@@ -23,12 +23,14 @@ function run(mode: 'isolated' | 'fallback'): { out: string; agents: string[] } {
   return { out, agents };
 }
 
-test("agent kullanıcıları: başka agent'ın ortamı ve dosyaları okunamaz, sudo yok, sır yok, push çalışır", { skip, timeout: 280_000 }, () => {
+test("agent kullanıcıları: başka agent'ın ortamı ve dosyaları okunamaz, sudo yok, sır yok, push çalışır", { skip, timeout: 430_000 }, () => {
   const { out, agents } = run('isolated');
   assert.match(out, /^teamlog=clean$/m);
   assert.match(out, /^warned=0$/m);
   assert.match(out, /^restart_names=same$/m);
   assert.match(out, /^restart=ok$/m);
+  assert.match(out, /^handback=ok$/m);
+  assert.match(out, /^rescan=none$/m);
   for (const b of agents) {
     assert.match(b, /^user=ar-/m);
     assert.match(b, /^env=\[\]$/m);
@@ -43,7 +45,7 @@ test("agent kullanıcıları: başka agent'ın ortamı ve dosyaları okunamaz, s
   assert.equal((out.split('== branches')[1] ?? '').trim().split('\n').filter((l) => l.startsWith('ar/iso/t1-')).length, 2, out);
 });
 
-test('yalnız tarayıcı girişi: uyarıyla bugünkü ortak node kullanıcısı moduna dönülür', { skip, timeout: 280_000 }, () => {
+test('yalnız tarayıcı girişi: uyarıyla bugünkü ortak node kullanıcısı moduna dönülür', { skip, timeout: 430_000 }, () => {
   const { out, agents } = run('fallback');
   assert.match(out, /^isolated=0$/m);
   assert.match(out, /^warned=1$/m);

@@ -62,7 +62,7 @@ Etkileşimsiz örnek: `node scripts/team.ts --room urun --orch 2 --orch-client c
 
 Agent'lara rastgele, çakışmasız insan isimleri verilir (ör. *Defne* orkestratör, *Can*, *Beren*, *Ilgaz* işçi). Kendi isimlerinizi vermek için `--names elif,mert,deniz` kullanın.
 
-**Modeller:** Claude Code agent'ları `claude-opus-5-5` modeliyle `high` düşünme düzeyinde, Codex agent'ları `gpt-5.6-sol` modeliyle `high` düzeyde çalışır. Değiştirmek için ortam değişkenleri: `CLAUDE_MODEL` / `CLAUDE_EFFORT`, `CODEX_MODEL` / `CODEX_EFFORT` ve `GEMINI_MODEL`. Docker'da bunları `.env` dosyasına yazın. `default` değeri seçimi CLI'a bırakır.
+**Modeller:** Orkestratörler Claude `claude-opus-5-5` / Codex `gpt-5.6-sol` ile `high` düşünme düzeyinde çalışır. İşçiler Claude `claude-sonnet-5-5` / Codex `gpt-5.6-sol` ile `medium` düzeyde çalışır: açıklamasını orkestratörün yazdığı görevleri uygularlar. `CLAUDE_MODEL` / `CLAUDE_EFFORT` ve `CODEX_MODEL` / `CODEX_EFFORT` iki rolü birden ayarlar. `CLAUDE_WORKER_MODEL` / `CLAUDE_WORKER_EFFORT` ve `CODEX_WORKER_MODEL` / `CODEX_WORKER_EFFORT` yalnız işçiler için onları ezer. `GEMINI_MODEL` Gemini'yi ayarlar. Claude oturumları yalnız reponun kendi ayarlarını yükler (`--setting-sources project,local`); `~/.claude` altındaki eklentiler, hook'lar ve skill'ler yüklenmez. Yüklemek için `CLAUDE_SETTING_SOURCES=user,project,local`. Docker'da bunları `.env` dosyasına yazın. `default` değeri seçimi CLI'a bırakır.
 
 Ardından kimlikleri alır, çalışma klonlarını `workspaces/<oda>/` altında hazırlar ve agent'ları arka planda başlatır. Farklı makinelerde aynı oda adını yazarsanız hepsi aynı masaya oturur.
 
@@ -81,9 +81,9 @@ node scripts/team.ts stop <oda>     # o odanın bu makinedeki agent'larını dur
 
 ### Birlikte düşünme: istişare ve başkan
 
-Orkestratör planı tek başına kesinleştirmez:
-1. Bir taslak çıkarır ve `consult_open` ile masaya sorar: eksik ya da riskli bir şey var mı, daha iyi bir bölme var mı, kim hangi işi almak ister?
-2. Masadaki her agent'a bildirim gider. İşçi o sırada bir görevin ortasındaysa, çağırdığı her aracın yanıtında "📬 Inbox: … consultation(s) await your reply" notunu görür ve `consult_reply` ile kısaca yanıtlar.
+Masada başka orkestratör varsa orkestratör planı tek başına kesinleştirmez:
+1. Bir taslak çıkarır ve `consult_open` ile sorar: eksik ya da riskli bir şey var mı, daha iyi bir bölme var mı? Varsayılan olarak diğer orkestratörler sorulur. İşçiler yalnız `ask` ile adları verilirse sorulur, çünkü sorulan her agent yalnızca cevap vermek için bir model oturumu açar. Tek orkestratör planı istişaresiz kurar.
+2. Davet edilen her agent'a bildirim gider. İşçi o sırada bir görevin ortasındaysa, çağırdığı her aracın yanıtında "📬 Inbox: … consultation(s) await your reply" notunu görür ve `consult_reply` ile kısaca yanıtlar.
 3. Orkestratör yanıtları `consult_get` ile toplar, planı günceller, kararı `consult_close` ile kaydeder ve ardından `plan_create(consult_id=…)` ile dağıtır.
 
 Seçenek verilirse (`options`) istişare oylamaya dönüşür. İşçiler de başkalarını etkileyen bir karardan önce aynı şekilde istişare açabilir.

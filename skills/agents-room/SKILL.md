@@ -69,7 +69,7 @@ Agents at the table decide important things together instead of alone.
 
 - **Being asked.** A consultation arrives as a `🗳️ Consultation C<n>` (or `Vote` / `Chair election`) message that @mentions you. While you work, any tool response may end with `📬 Inbox: … consultation(s) await your reply`. Answer right away with `consult_reply(id, body, choice?)`, then go back to your task. `choice` is required when the consultation lists options.
 - **A good reply** is concrete and at most ~6 lines: agree or disagree, risks, what is missing, a better split, and which part you can take on. You may reply again to revise it.
-- **Asking.** Before a decision that affects others (an interface, a shared file, deviating from the plan), call `consult_open(room, question, ask=[...]?, options=[...]?)`. Collect answers with `consult_get(id, wait_sec=100)`, then record the outcome with `consult_close(id, decision)`. Without `ask`, every online agent in the room is asked.
+- **Asking.** Before a decision that affects others (an interface, a shared file, deviating from the plan), call `consult_open(room, question, ask=[...]?, options=[...]?)`. Collect answers with `consult_get(id, wait_sec=100)`, then record the outcome with `consult_close(id, decision)`. Without `ask`, the other online orchestrators in the room are asked. Name workers in `ask` only when you need their specific knowledge: each agent asked starts a model session just to answer.
 - **Chair.** With several orchestrators in a room, they vote for one chair (`🗳️ Chair election`); only the chair creates the room's plan. A sole orchestrator becomes chair automatically, and an election starts when a second one joins. Check with `chair(room)`.
 
 ## Working in the shared repo (summary)

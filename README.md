@@ -69,7 +69,7 @@ Non-interactive example: `node scripts/team.ts --room product --orch 2 --orch-cl
 
 Agents get random, non-clashing human names (e.g. *Defne* as orchestrator; *Can*, *Beren*, *Ilgaz* as workers). Use `--names elif,mert,deniz` to choose your own.
 
-**Models:** Claude Code agents run `claude-opus-5-5` with `high` effort; Codex agents run `gpt-5.6-sol` with `high` reasoning effort. Change them with the environment variables `CLAUDE_MODEL` / `CLAUDE_EFFORT`, `CODEX_MODEL` / `CODEX_EFFORT` and `GEMINI_MODEL`. In Docker, set them in `.env`. The value `default` leaves the choice to the CLI.
+**Models:** Orchestrators run Claude `claude-opus-5-5` / Codex `gpt-5.6-sol` with `high` effort. Workers run Claude `claude-sonnet-5-5` / Codex `gpt-5.6-sol` with `medium` effort: they carry out tasks whose description the orchestrator already wrote. `CLAUDE_MODEL` / `CLAUDE_EFFORT` and `CODEX_MODEL` / `CODEX_EFFORT` set both roles; `CLAUDE_WORKER_MODEL` / `CLAUDE_WORKER_EFFORT` and `CODEX_WORKER_MODEL` / `CODEX_WORKER_EFFORT` override them for workers only; `GEMINI_MODEL` sets Gemini. Claude sessions load only the repo's own settings (`--setting-sources project,local`), not your `~/.claude` plugins, hooks and skills; set `CLAUDE_SETTING_SOURCES=user,project,local` to load them. In Docker, set them in `.env`. The value `default` leaves the choice to the CLI.
 
 The setup then:
 1. obtains the agents' identities;
@@ -96,9 +96,9 @@ node scripts/team.ts stop <room>     # stop that room's agents on this machine
 
 ### Thinking together: consultations and the chair
 
-The orchestrator does not finalize a plan on its own:
-1. It drafts one and asks the table with `consult_open`: is anything missing or risky, is there a better split, who wants which task?
-2. Every agent at the table is notified. A worker in the middle of a task sees a "📬 Inbox: … consultation(s) await your reply" note in every tool response and answers briefly with `consult_reply`.
+With other orchestrators at the table, an orchestrator does not finalize a plan on its own:
+1. It drafts one and asks with `consult_open`: is anything missing or risky, is there a better split? By default the other orchestrators are asked. Workers are asked only when named in `ask`, because every agent asked starts a model session just to answer. A sole orchestrator plans without a consultation.
+2. Every invited agent is notified. A worker in the middle of a task sees a "📬 Inbox: … consultation(s) await your reply" note in every tool response and answers briefly with `consult_reply`.
 3. The orchestrator collects the answers with `consult_get`, revises the plan, records the decision with `consult_close`, then dispatches it with `plan_create(consult_id=…)`.
 
 Passing `options` turns a consultation into a vote. Workers can open consultations too, before a decision that affects others.

@@ -505,10 +505,15 @@ test("kayıt (enroll): var olan isim yalnız kendi token'ı ya da admin ile yeni
 test('istişare: davet, gelen kutusu notu, oylama doğrulaması, bekleme, karar ve plana bağlama', async () => {
   svc.createRoom('istisare', 'fikir alışverişi', null, 'admin');
   for (const n of ['orch', 'w1', 'w2']) await call(n, 'room_join', { room: 'istisare' });
+  // Varsayılan davetliler yalnız orkestratörlerdir: tek orkestratörlü masada ask olmadan kimse sorulmaz.
+  const alone = await call('orch', 'consult_open', { room: 'istisare', question: 'Taslak plan: core + cli + docs. Uygun mu?' });
+  assert.equal(alone.isError, true);
+  assert.match(alone.text, /no other online orchestrator.*ask=/);
   const open = await call('orch', 'consult_open', {
     room: 'istisare',
     question: 'Taslak plan: core + cli + docs. Depolama için ne kullanalım?',
     options: ['json', 'sqlite'],
+    ask: ['w1', 'w2'],
     timeout_sec: 60,
   });
   assert.equal(open.isError, false, open.text);
@@ -617,6 +622,11 @@ test('başkan seçimi süresi dolunca: oy yoksa masaya ilk gelen kazanır; isti�
   assert.equal(svc.chairOf('secim'), 'o2');
 
   await call('w1', 'room_join', { room: 'secim' });
+  // ask olmadan yalnız diğer orkestratör sorulur; işçi oturum açmak zorunda kalmaz.
+  const toOrchs = await call('o2', 'consult_open', { room: 'secim', question: 'Varsayılan davetliler kimler olmalı?' });
+  const oid = Number(toOrchs.text.match(/Opened C(\d+)/)![1]);
+  assert.deepEqual(svc.getConsult(oid)!.invitees, ['o1']);
+  await call('o2', 'consult_close', { id: oid, decision: 'tamam' });
   const c = await call('o2', 'consult_open', { room: 'secim', question: 'Bu yaklaşım hakkında ne düşünüyorsunuz?', ask: ['w1'] });
   const cid = Number(c.text.match(/Opened C(\d+)/)![1]);
   svc.db.prepare('UPDATE consults SET deadline = ? WHERE id = ?').run(Date.now() - 1, cid);

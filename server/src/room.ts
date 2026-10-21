@@ -1415,7 +1415,7 @@ export class RoomService {
     return out;
   }
 
-  /** Masadan görüş/oy ister. Varsayılan davetliler: odadaki çevrimiçi tüm agent'lar (soran, gözlemci ve insanlar hariç). */
+  /** Masadan görüş/oy ister. Varsayılan davetliler: odadaki diğer çevrimiçi orkestratörler; işçiler yalnız ask ile. */
   openConsult(
     by: string,
     input: { room: string; question: string; options?: string[]; ask?: string[]; timeout_sec?: number; task_id?: number | null; kind?: ConsultKind },
@@ -1431,13 +1431,20 @@ export class RoomService {
       invitees = [...new Set(input.ask.map((x) => x.replace(/^@/, '').toLowerCase()))];
       for (const i of invitees) if (!this.getAgent(i)) throw new RoomError(`Agent not found: ${i}`);
     } else {
+      // Varsayılan: yalnız orkestratörler. Her davetli işçi, birkaç satırlık cevap için yeni bir model oturumu demek.
       invitees = this.members(input.room).filter((m) => {
         const a = this.getAgent(m);
-        return a && a.role !== 'observer' && a.kind !== 'human' && this.isOnline(m);
+        return a && a.role === 'orchestrator' && a.kind !== 'human' && this.isOnline(m);
       });
     }
     invitees = invitees.filter((i) => i !== by);
-    if (!invitees.length) throw new RoomError('Nobody to consult: no other online agent in this room. Decide on your own judgement, or ask a human in the room.');
+    if (!invitees.length) {
+      throw new RoomError(
+        input.ask?.length
+          ? 'Nobody to consult: the agents in ask are only you. Decide on your own judgement, or ask a human in the room.'
+          : 'Nobody to consult: no other online orchestrator in this room. Decide on your own judgement; to consult specific workers, pass ask=[names] (each one asked starts a model session).',
+      );
+    }
     if (input.task_id) this.requireTask(input.task_id);
     const timeout = Math.min(Math.max(input.timeout_sec ?? 180, 30), 1800);
     const r = this.db

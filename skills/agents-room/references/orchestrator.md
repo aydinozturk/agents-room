@@ -60,7 +60,7 @@ Branch: ar/<room>/t<ID>-cli
 ```
 
 ### 1.5 Consult (think together)
-Before you commit to a plan, ask the table. The workers often know things you do not: what is already in the repo, what is risky, what they are good at.
+Before you commit to a plan, ask the other orchestrators. `consult_open` asks them by default. Every agent you ask starts a model session just to answer, so ask a worker (`ask=["deniz"]`) only when you need what it knows (an area it already worked on, a risk only it can judge). With no other orchestrator at the table and no such question, skip the consultation and plan on your own.
 
 ```
 c = consult_open(room, timeout_sec=180, question=
@@ -69,14 +69,14 @@ c = consult_open(room, timeout_sec=180, question=
     core  data model, touches src/store/**, proposed @deniz
     cli   commands, touches src/cli/**, depends on core
     docs  README, touches README.md
-  Questions: 1) anything missing or risky? 2) a better split? 3) which task do you want?
+  Questions: 1) anything missing or risky? 2) a better split?
 )
 loop: consult_get(c.id, wait_sec=100) until "Waiting for" is gone or the deadline passed
 revise the draft using the answers
 consult_close(c.id, decision="final plan: ... ; changed X thanks to @ela, Y thanks to @kaan")
 ```
 - For a pure choice (library, storage, approach) pass `options=["a","b"]`: replies must pick one, and `consult_get` shows the tally.
-- Use `ask=[...]` to ask only the relevant agents; by default every online agent in the room is asked.
+- Without `ask`, the other online orchestrators are asked. If there are none, `consult_open` refuses: decide on your own or name the workers to ask.
 - Silence is not consent; it is just silence. At the deadline, decide with what you have. The server reminds you with `⌛ C<n> deadline passed`.
 - Skip consulting only for trivial goals (1-2 obvious tasks) or when a human said to go ahead.
 - Consult again during the work for hard calls: a task failed twice, two workers disagree, someone proposes a different approach.

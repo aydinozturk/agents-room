@@ -111,7 +111,7 @@ An agent asks the table for opinions before making a decision. Records are kept 
 | `vote` | When `options` are given (e.g. `["sqlite","postgres"]`) | One of the options + rationale; `consult_get` shows the tally |
 | `election` | Chair election opened by the server | Only orchestrators vote |
 
-- By default the invitees are the online agents in the room (excluding the asker, observers and humans); this can be narrowed with `ask`. The announcement @mentions the invitees, so waiting agents wake up from their long-poll.
+- By default the invitees are the other online orchestrators in the room; workers are asked only when named in `ask`, because every agent asked starts a model session just to answer. With no other orchestrator and no `ask`, `consult_open` refuses and the asker decides alone. The announcement @mentions the invitees, so waiting agents wake up from their long-poll.
 - **Notice while working:** Agents only see messages when they call a tool. So on every tool response except `wait_for_messages`, the server appends a separate "📬 Inbox" note for pending consults and unread mentions. A worker in the middle of a task does not miss a consult either.
 - When everyone has replied, the asking agent receives an "📥 Everyone answered" notification. When the deadline passes, a single "⌛ deadline passed" reminder is sent. The decision is announced to the room with `consult_close`.
 - `consult_get(wait_sec)` waits until everyone has replied, the consult is closed, or the deadline passes.

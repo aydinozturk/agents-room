@@ -2,7 +2,7 @@
 // agent kimliği argümandan değil Bearer token'dan gelir (sahtecilik engellenir).
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { type Agent, RoomError, type RoomService, fmtMessages } from './room.ts';
+import { type Agent, RoomError, type RoomService, type Task, fmtMessages } from './room.ts';
 import { ROLE_PROMPTS } from './prompts.ts';
 
 export const SERVER_INSTRUCTIONS = `agents-room: a shared meeting table for AI agents running on different machines.
@@ -20,11 +20,36 @@ type Json = unknown;
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}… (shortened)` : s);
 
+// Yanıtlar agent'ın bağlamında kalır ve sonraki her turda yeniden okunur: girintisiz JSON, boş (null) alan yok.
+const dropNulls = (key: string, v: unknown) => (v === null && key !== '' ? undefined : v);
+
 function ok(data: Json, text?: string) {
   return {
-    content: [{ type: 'text' as const, text: text ?? JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text' as const, text: text ?? JSON.stringify(data, dropNulls) }],
   };
 }
+
+const iso = (ms: number | null) => (ms ? new Date(ms).toISOString().slice(0, 19) + 'Z' : null);
+
+/** Görev değiştiren araçların yanıtı: açıklama/sonuç gibi agent'ın zaten bildiği uzun alanlar olmadan. */
+const taskBrief = (t: Task) => ({ id: t.id, title: t.title, status: t.status, assignee: t.assignee, branch: t.branch, lease_until: iso(t.lease_until), progress: t.progress && clip(t.progress, 200) });
+
+type TreeNode = Task & { children: TreeNode[] };
+/** Plan ağacı: kökün açıklaması kısaltılır, alt görevlerin açıklaması yok (task_get tam ayrıntıyı verir). */
+const treeView = (t: TreeNode, root = true): Json => ({
+  id: t.id,
+  title: t.title,
+  status: t.status,
+  assignee: t.assignee,
+  ...(root ? { description: clip(t.description, 1500) } : {}),
+  depends_on: t.depends_on.length ? t.depends_on : null,
+  branch: t.branch,
+  progress: t.progress && clip(t.progress, 300),
+  result: t.result && clip(t.result, 600),
+  artifacts: t.artifacts.length ? t.artifacts : null,
+  error: t.error && clip(t.error, 300),
+  children: t.children.length ? t.children.map((c) => treeView(c, false)) : root ? [] : null,
+});
 
 function fail(e: unknown) {
   const msg = e instanceof RoomError ? e.message : `Unexpected error: ${(e as Error).message}`;
@@ -113,11 +138,11 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
     const a = svc.getAgent(me.name)!;
     const rooms = svc.roomsOf(me.name);
     return ok({
-      agent: a,
+      agent: { name: a.name, role: a.role, kind: a.kind, capabilities: a.capabilities, status: a.status, activity: a.activity, current_task: a.current_task },
       rooms,
       chairs: Object.fromEntries(rooms.map((r) => [r, svc.chairOf(r)])),
       awaiting_my_reply: svc.pendingConsults(me.name).map((c) => ({ id: c.id, room: c.room, kind: c.kind, asker: c.asker, question: c.question.slice(0, 300) })),
-      my_active_tasks: svc.listTasks({ assignee: me.name, status: ['open', 'claimed', 'in_progress', 'review'] }),
+      my_active_tasks: svc.listTasks({ assignee: me.name, status: ['open', 'claimed', 'in_progress', 'review'] }).map((t) => ({ id: t.id, room: t.room, title: t.title, status: t.status, branch: t.branch, progress: t.progress && clip(t.progress, 200) })),
       server_time: new Date().toISOString(),
     });
   }, { readOnlyHint: true });
@@ -137,7 +162,22 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
     },
   );
 
-  tool('list_agents', 'Lists all agents with status, role, capabilities and last-seen time.', {}, () => ok(svc.listAgents()), { readOnlyHint: true });
+  tool('list_agents', 'Lists all agents with role, status, capabilities, current activity and seconds since last seen.', {}, () => {
+    const now = Date.now();
+    return ok(
+      svc.listAgents().map((a) => ({
+        name: a.name,
+        role: a.role,
+        kind: a.kind,
+        status: a.status,
+        capabilities: a.capabilities,
+        activity: a.activity && clip(a.activity, 120),
+        current_task: a.current_task,
+        seen_sec_ago: a.last_seen ? Math.round((now - a.last_seen) / 1000) : null,
+        unavailable_until: iso(a.unavailable_until),
+      })),
+    );
+  }, { readOnlyHint: true });
 
   // ------------------------------------------------------------ odalar
   tool('room_list', 'Lists open rooms (tables) with member and open-task counts.', {}, () => ok(svc.listRooms()), { readOnlyHint: true });
@@ -326,7 +366,7 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
     return ok({ ...t, claimable_by_me: svc.claimable(t, a) });
   }, { readOnlyHint: true });
 
-  tool('task_tree', 'Returns a plan (parent task) with all subtasks, results and artifacts. Orchestrators use it to collect results.', { id: z.number().int() }, ({ id }) => ok(svc.tree(id)), { readOnlyHint: true });
+  tool('task_tree', 'Returns a plan (parent task) with all subtasks: status, assignee, progress, results and artifacts (long texts shortened, subtask descriptions omitted; task_get(id) gives full details). Orchestrators use it to collect results.', { id: z.number().int() }, ({ id }) => ok(treeView(svc.tree(id) as TreeNode)), { readOnlyHint: true });
 
   tool(
     'task_claim',
@@ -355,7 +395,7 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
       branch: z.string().optional().describe('Git branch you are working on'),
       lease_minutes: z.number().int().min(5).max(240).optional(),
     },
-    ({ id, ...rest }) => ok(svc.update(me.name, id, rest)),
+    ({ id, ...rest }) => ok(taskBrief(svc.update(me.name, id, rest))),
   );
 
   tool(
@@ -366,14 +406,14 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
       result: z.string().min(1).describe('What was done, how it was verified, what is left open'),
       artifacts: arr(artifactSchema).default([]),
     },
-    ({ id, result, artifacts }) => ok(svc.complete(me.name, id, { result, artifacts })),
+    ({ id, result, artifacts }) => ok(taskBrief(svc.complete(me.name, id, { result, artifacts }))),
   );
 
   tool(
     'task_fail',
     'Marks a task as failed. With retry=true the task is reopened for another agent.',
     { id: z.number().int(), error: z.string().min(1), retry: z.boolean().default(false) },
-    ({ id, error, retry }) => ok(svc.fail(me.name, id, error, retry)),
+    ({ id, error, retry }) => ok(taskBrief(svc.fail(me.name, id, error, retry))),
   );
 
   tool(
@@ -385,7 +425,7 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
       feedback: z.string().optional(),
       assignee: z.string().optional(),
     },
-    ({ id, ...rest }) => ok(svc.review(me.name, id, rest)),
+    ({ id, ...rest }) => ok(taskBrief(svc.review(me.name, id, rest))),
   );
 
 
@@ -399,12 +439,12 @@ export function buildMcpServer(svc: RoomService, me: Agent, opts: ToolOptions): 
 
   tool(
     'consult_open',
-    'Asks the table for input before you decide: a plan draft, a design choice, how to split or review work. Everyone invited is @mentioned and answers with consult_reply. Give options to make it a vote. Then collect with consult_get(wait_sec) and record the outcome with consult_close.',
+    'Asks for input before you decide: a plan draft, a design choice, how to split or review work. By default the other orchestrators in the room are asked; name workers in ask only when you need their specific knowledge (each one asked starts a model session). Everyone invited is @mentioned and answers with consult_reply. Give options to make it a vote. Then collect with consult_get(wait_sec) and record the outcome with consult_close.',
     {
       room: z.string(),
       question: z.string().min(10).describe('Context + the concrete question(s). For a plan: the draft subtasks (key, title, files touched, assignee) and what you want feedback on.'),
       options: arr(z.string()).optional().describe('Choices for a vote, e.g. ["sqlite","postgres"]; omit for open-ended opinions'),
-      ask: arr(z.string()).optional().describe('Agents to ask; defaults to every online agent in the room'),
+      ask: arr(z.string()).optional().describe('Agents to ask; defaults to the other online orchestrators in the room'),
       timeout_sec: z.number().int().min(30).max(1800).default(180).describe('How long you will wait for answers'),
       task_id: z.number().int().optional().describe('Related task'),
     },

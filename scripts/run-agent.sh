@@ -50,7 +50,7 @@ Steps: whoami → room_join (it shows the Chair and the ROOM NOTES) → list_age
 If 'Plans you lead' is listed, CONTINUE those plans (task_tree(id), then react to what woke you); never create a second plan for the same goal. If nothing needs you (no goal yet, nothing addressed to you), end the session right away.
 CHAIR: if a chair election (🗳️ Chair election C<n>) is running, vote first with consult_reply(id, choice=<name>, body=<reason>). Only the chair plans the whole goal; if another orchestrator is chair, support it (answer its consultations, propose ideas) and plan only the sub-plan tasks it assigns you, with plan_create(parent_id=<that task id>).
 REPO MAP: if the room notes are empty or outdated, explore the repo ONCE (layout, key modules and entry points, build/test commands, conventions) and write a concise map (at most ~150 lines) with room_notes(action=\"set\"). Every worker session reads it instead of re-scanning the codebase, so keep it accurate and short.
-PLAN (as chair, or for your sub-plan): draft 3-6 subtasks (disjoint file sets, clear acceptance criteria) → CONSULT the table before committing: consult_open(room, question=<goal + draft + 2-3 concrete questions>), collect with consult_get(id, wait_sec=100) until everyone answered or the deadline passed, revise, consult_close(id, decision) → plan_create(..., consult_id=<id>).
+PLAN (as chair, or for your sub-plan): draft 3-6 subtasks (disjoint file sets, clear acceptance criteria) → CONSULT before committing: consult_open(room, question=<goal + draft + 2-3 concrete questions>) asks the other orchestrators by default; name a worker in ask=[...] only when you need what it knows (every agent asked starts a model session); with no other orchestrator and no such question, skip consulting. Collect with consult_get(id, wait_sec=100) until everyone answered or the deadline passed, revise, consult_close(id, decision) → plan_create(..., consult_id=<id>).
 TASK CONTEXT: a worker starts each task with a fresh context, so every subtask description carries what it needs instead of making it search: Goal; Touch (exact paths); Do not touch; Context (files/functions to read first, interfaces to follow, related task ids); Acceptance. Give follow-up tasks of the same area to the same worker (assignee) so it can reuse what it already knows.
 MONITOR WITHOUT IDLING: after dispatching, or whenever you are only waiting for workers, write where things stand with task_update(<plan id>, progress=\"waiting on #12,#13; next: review #11\") and END THE SESSION. Do not loop on wait_for_messages. Stay only while a consultation you opened is collecting replies.
 REVIEW: check finished tasks (task_review reopen if needed). When all subtasks are done, merge the branches into the base branch in dependency order, run the tests, update the room notes if the structure changed, post a final report to the room and close the parent task with task_complete.
@@ -168,14 +168,27 @@ if [[ -n "${CLAUDE_ALLOWED_TOOLS:-}" ]]; then
   done
 fi
 
+# Rol başına varsayılan: orkestratör planlar ve inceler (güçlü model, yüksek düşünme); işçi, açıklaması hazır görevi
+# uygular (daha ucuz model, orta düşünme). Sıra: --model > *_WORKER_* (yalnız işçi) > CLAUDE_MODEL/CODEX_MODEL > varsayılan.
 EFFORT=""
-case "$CLIENT" in
-  claude) MODEL="${MODEL:-${CLAUDE_MODEL:-claude-opus-5-5}}"; EFFORT="${CLAUDE_EFFORT:-high}" ;;
-  codex) MODEL="${MODEL:-${CODEX_MODEL:-gpt-5.6-sol}}"; EFFORT="${CODEX_EFFORT:-high}" ;;
-  gemini) MODEL="${MODEL:-${GEMINI_MODEL:-}}" ;;
-esac
+if [[ "$ROLE" == orchestrator ]]; then
+  case "$CLIENT" in
+    claude) MODEL="${MODEL:-${CLAUDE_MODEL:-claude-opus-5-5}}"; EFFORT="${CLAUDE_EFFORT:-high}" ;;
+    codex) MODEL="${MODEL:-${CODEX_MODEL:-gpt-5.6-sol}}"; EFFORT="${CODEX_EFFORT:-high}" ;;
+  esac
+else
+  case "$CLIENT" in
+    claude) MODEL="${MODEL:-${CLAUDE_WORKER_MODEL:-${CLAUDE_MODEL:-claude-sonnet-5-5}}}"; EFFORT="${CLAUDE_WORKER_EFFORT:-${CLAUDE_EFFORT:-medium}}" ;;
+    codex) MODEL="${MODEL:-${CODEX_WORKER_MODEL:-${CODEX_MODEL:-gpt-5.6-sol}}}"; EFFORT="${CODEX_WORKER_EFFORT:-${CODEX_EFFORT:-medium}}" ;;
+  esac
+fi
+[[ "$CLIENT" == gemini ]] && MODEL="${MODEL:-${GEMINI_MODEL:-}}"
 [[ "$MODEL" == default ]] && MODEL=""
 [[ "$EFFORT" == default ]] && EFFORT=""
+
+# Kullanıcının ~/.claude ayarları (eklentiler, hook'lar, kişisel CLAUDE.md, skill'ler) agent oturumlarına girmesin:
+# her oturum bunları baştan bağlamına yükler. Reponun kendi .claude ayarları kalır. Hepsi için: user,project,local
+CLAUDE_SETTING_SOURCES="${CLAUDE_SETTING_SOURCES:-project,local}"
 
 run_client() { # SESSION_PROMPT ve LOG ile bir model oturumu; çıkış kodu RC'de
   RC=0
@@ -195,7 +208,7 @@ EOF
         PERM_ARGS=(--permission-mode acceptEdits --allowedTools "mcp__agents-room" "Read" "Edit" "Write" "Glob" "Grep" "Bash(git:*)" "Bash(npm:*)" "Bash(npx:*)" "Bash(node:*)" "Bash(ls:*)" "Bash(mkdir:*)" "Bash(cat:*)" "WebSearch" "WebFetch" ${GH_CLAUDE[@]+"${GH_CLAUDE[@]}"} ${EXTRA_TOOLS[@]+"${EXTRA_TOOLS[@]}"})
       fi
       MCP_TOOL_TIMEOUT=120000 claude -p "$SESSION_PROMPT" \
-        --mcp-config "$CFG" --strict-mcp-config \
+        --mcp-config "$CFG" --strict-mcp-config --setting-sources "$CLAUDE_SETTING_SOURCES" \
         --add-dir "$SKILL" "$(dirname "$REPO")" "$WT_DIR" \
         "${PERM_ARGS[@]}" \
         ${MODEL:+--model "$MODEL"} ${EFFORT:+--effort "$EFFORT"} \

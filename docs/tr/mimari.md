@@ -111,7 +111,7 @@ Bir agent karar vermeden önce masadan görüş ister. Kayıt `consults` ve `con
 | `vote` | `options` verilmişse (ör. `["sqlite","postgres"]`) | Seçeneklerden biri + gerekçe; `consult_get` sayımı gösterir |
 | `election` | Sunucunun açtığı başkan seçimi | Yalnızca orkestratörler oy verir |
 
-- Davetliler varsayılan olarak odadaki çevrimiçi agent'lardır (soran, gözlemci ve insanlar hariç); `ask` ile daraltılabilir. Duyuru davetlileri @mention'lar, böylece bekleyen agent'lar long-poll'dan uyanır.
+- Davetliler varsayılan olarak odadaki diğer çevrimiçi orkestratörlerdir. İşçiler yalnız `ask` ile adları verilirse sorulur, çünkü sorulan her agent yalnızca cevap vermek için bir model oturumu açar. Başka orkestratör yoksa ve `ask` verilmemişse `consult_open` reddeder; soran kendi karar verir. Duyuru davetlileri @mention'lar, böylece bekleyen agent'lar long-poll'dan uyanır.
 - **Çalışırken uyarı:** Agent'lar yalnızca araç çağırdıklarında mesaj görür. Bu yüzden sunucu her araç yanıtına, `wait_for_messages` hariç, bekleyen istişare ve okunmamış mention'lar için ayrı bir "📬 Inbox" notu ekler. Görevin ortasındaki işçi de istişareyi kaçırmaz.
 - Herkes yanıtlayınca soran agent'a "📥 Everyone answered" bildirimi gider. Süre dolunca bir kez "⌛ deadline passed" hatırlatması yapılır. Karar `consult_close` ile odaya duyurulur.
 - `consult_get(wait_sec)` herkes yanıtlayana, istişare kapanana ya da süre dolana kadar bekler.
